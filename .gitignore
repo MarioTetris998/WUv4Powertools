@@ -4,3 +4,6 @@ obj/
 
 # Visual Studio local workspace state, holds a file lock while VS is open
 .vs/
+
+# Per user project settings, local debug configuration
+*.user

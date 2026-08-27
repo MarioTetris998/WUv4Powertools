@@ -173,15 +173,46 @@ public class frmMain : Form
 		}
 	}
 
-	internal void openInventories(string pathInv, bool addHistory = true)
+	internal bool openInventories(string pathInv, bool addHistory = true)
 	{
+		if (string.IsNullOrWhiteSpace(pathInv))
+		{
+			MessageBox.Show("No inventory folder was specified.", "Windows Update v4.0", MessageBoxButtons.OK, MessageBoxIcon.Hand);
+			return false;
+		}
+		
+		string providersPath = pathInv + "\\providers.txt";
+		string providerStringsPath = pathInv + "\\providerstrings.txt";
+		
+		// The folder can be gone entirely (a deleted or disconnected inventory) or still
+		// be there but not be a dictionary, so check both before reading anything.
+		if (!Directory.Exists(pathInv) || !File.Exists(providersPath) || !File.Exists(providerStringsPath))
+		{
+			MessageBox.Show("This inventory could not be opened. The folder no longer exists, or it is not a WUv4 dictionary:\n\n" + pathInv, "Windows Update v4.0", MessageBoxButtons.OK, MessageBoxIcon.Hand);
+			RemoveRecentFile(pathInv);
+			return false;
+		}
+		
+		string[] array;
+		string[] lines1;
+		try
+		{
+			array = File.ReadAllLines(providersPath);
+			lines1 = File.ReadAllLines(providerStringsPath, Encoding.Unicode);
+		}
+		catch (Exception ex)
+		{
+			MessageBox.Show("This inventory could not be read:\n\n" + ex.Message, "Windows Update v4.0", MessageBoxButtons.OK, MessageBoxIcon.Hand);
+			return false;
+		}
+		
+		// Only record the path once it has actually loaded, so a folder that fails
+		// never gets added to the recent list.
 		if (addHistory)
 		{
 			SaveRecentFile(pathInv);
 		}
 		
-		string[] array = File.ReadAllLines(pathInv + "\\providers.txt");
-		string[] lines1 = File.ReadAllLines(pathInv + "\\providerstrings.txt", Encoding.Unicode);
 		frmProvider frmProvider2 = new frmProvider();
 		frmProvider2.Tag = this;
 		frmProvider2.Show();
@@ -223,6 +254,8 @@ public class frmMain : Form
 				}
 			}
 		}
+		
+		return true;
 	}
 
 	private void tmrStatus_Tick(object sender, EventArgs e)
@@ -232,16 +265,7 @@ public class frmMain : Form
 	private void frmMain_Load(object sender, EventArgs g)
 	{
 		LoadRecentList();
-		foreach (string item in MRUlist)
-		{
-			ToolStripMenuItem fileRecent = new ToolStripMenuItem(item);
-			fileRecent.Click += delegate
-			{
-				folderBrowserDialogSrc = fileRecent.Text;
-				openInventories(folderBrowserDialogSrc, addHistory: false);
-			};
-			openToolStripButton.DropDownItems.Add(fileRecent);
-		}
+		RebuildRecentMenu();
 	}
 
 	private void btnNewUpdate_Click(object sender, EventArgs e)
@@ -689,7 +713,6 @@ public class frmMain : Form
 
 	private void SaveRecentFile(string strPath)
 	{
-		openToolStripButton.DropDownItems.Clear();
 		LoadRecentList();
 		if (!MRUlist.Contains(strPath))
 		{
@@ -699,23 +722,55 @@ public class frmMain : Form
 		{
 			MRUlist.Dequeue();
 		}
+		RebuildRecentMenu();
+		WriteRecentList();
+	}
+
+	// Drops an inventory that can no longer be opened, so a folder that has been
+	// deleted or moved stops reappearing in the recent list.
+	private void RemoveRecentFile(string strPath)
+	{
+		LoadRecentList();
+		if (!MRUlist.Contains(strPath))
+		{
+			return;
+		}
+		MRUlist = new Queue<string>(MRUlist.Where(item => item != strPath));
+		RebuildRecentMenu();
+		WriteRecentList();
+	}
+
+	private void RebuildRecentMenu()
+	{
+		openToolStripButton.DropDownItems.Clear();
 		foreach (string strItem in MRUlist)
 		{
-			ToolStripMenuItem tsRecent = new ToolStripMenuItem(strItem, null);
+			string itemPath = strItem;
+			ToolStripMenuItem tsRecent = new ToolStripMenuItem(itemPath, null);
 			tsRecent.Click += delegate
 			{
-				folderBrowserDialogSrc = strItem;
+				folderBrowserDialogSrc = itemPath;
 				openInventories(folderBrowserDialogSrc, addHistory: false);
 			};
 			openToolStripButton.DropDownItems.Add(tsRecent);
 		}
-		StreamWriter stringToWrite = new StreamWriter(Environment.CurrentDirectory + "\\Recent.txt");
-		foreach (string item in MRUlist)
+	}
+
+	private void WriteRecentList()
+	{
+		try
 		{
-			stringToWrite.WriteLine(item);
+			StreamWriter stringToWrite = new StreamWriter(Environment.CurrentDirectory + "\\Recent.txt");
+			foreach (string item in MRUlist)
+			{
+				stringToWrite.WriteLine(item);
+			}
+			stringToWrite.Flush();
+			stringToWrite.Close();
 		}
-		stringToWrite.Flush();
-		stringToWrite.Close();
+		catch (Exception)
+		{
+		}
 	}
 
 	private void LoadRecentList()
