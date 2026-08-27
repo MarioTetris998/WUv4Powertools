@@ -1,0 +1,6 @@
+# Build output, regenerated every time the solution is built
+bin/
+obj/
+
+# Visual Studio local workspace state, holds a file lock while VS is open
+.vs/
