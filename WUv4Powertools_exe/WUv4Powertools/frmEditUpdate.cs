@@ -1,0 +1,789 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Drawing;
+using System.Globalization;
+using System.IO;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using System.Xml;
+using AdvancedWizardControl.Enums;
+using AdvancedWizardControl.Wizard;
+using AdvancedWizardControl.WizardPages;
+using WUv4Powertools.Properties;
+
+namespace WUv4Powertools;
+
+public class frmEditUpdate : Form
+{
+	private frmItemList frmItemList;
+
+	private frmMain frmMain;
+
+	private bool isWindows;
+
+	private bool is9x;
+
+	private Update upd;
+
+	private string[] line_split = new string[0];
+
+	private int[] line_int = new int[0];
+
+	private List<string> codeIndex = new List<string>();
+
+	private Guid fileGuid = Guid.NewGuid();
+
+	private Guid langGuid = Guid.NewGuid();
+
+	private string[] baseLangs = new string[27]
+	{
+		"ar", "cs", "da", "de", "el", "en", "es", "fi", "fr", "he",
+		"hu", "it", "ja", "ko", "nec", "nl", "no", "pl", "pt", "ptbr",
+		"ru", "sk", "sl", "sv", "tr", "zhcn", "zhtw"
+	};
+
+	private string[] langGuids = new string[27]
+	{
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper(),
+		Guid.NewGuid().ToString().ToUpper()
+	};
+
+	private IContainer components;
+
+	private AdvancedWizard advancedWizard1;
+
+	private AdvancedWizardPage advancedWizardPage2;
+
+	private CheckBox chkExclusive;
+
+	private CheckBox chkCritical;
+
+	private Label lblExtras;
+
+	private Label lblGroup;
+
+	private ComboBox cmbGroup;
+
+	private Label lblHelp0;
+
+	private CheckBox chkEULARequired;
+
+	private AdvancedWizardPage advancedWizardPage3;
+
+	private TextBox txtArguments;
+
+	private Label lblArguments;
+
+	private TextBox txtDetection;
+
+	private Label lblDetection;
+
+	private CheckBox chkRebootReq;
+
+	private DateTimePicker cmbDate;
+
+	private Label lblLanguage;
+
+	private Label lblHelp1;
+
+	// Prerequisite editing (feature: add/remove prerequisites on any update)
+	private Label lblPrereqs;
+	private ListBox lstPrereqs;
+	private Button btnAddPrereq;
+	private Button btnRemovePrereq;
+	// Selected prerequisite update codes (provider-agnostic update codes, e.g. "811630_W98_5928").
+	private List<string> prereqCodes = new List<string>();
+
+	public frmEditUpdate(frmItemList frmItemList, frmMain frmMain, Update upd)
+	{
+		this.upd = upd;
+		this.frmMain = frmMain;
+		this.frmItemList = frmItemList;
+		InitializeComponent();
+	}
+
+	private void advancedWizard1_Cancel(object sender, EventArgs e)
+	{
+		Dispose();
+	}
+
+	private void frmAddUpdate_Load(object sender, EventArgs e)
+	{
+		line_split = upd.itemlines[0].Split(new string[1] { "@|" }, StringSplitOptions.None);
+		cmbGroup.Text = upd.group.ToString();
+		chkCritical.Checked = upd.critical;
+		chkExclusive.Checked = upd.exclusive;
+		txtDetection.Text = line_split[4];
+		XmlDocument installation = new XmlDocument();
+		installation.Load(new MemoryStream(Encoding.UTF8.GetBytes(line_split[5])));
+		DateTime myDate = DateTime.ParseExact(line_split[9].Split('T')[0], "yyyy-MM-dd", CultureInfo.InvariantCulture);
+		cmbDate.Value = myDate;
+		
+		// Fix: Add null check for switches element
+		var switchesElements = installation.GetElementsByTagName("switches");
+		if (switchesElements != null && switchesElements.Count > 0)
+		{
+			txtArguments.Text = switchesElements[0].InnerXml;
+		}
+		else
+		{
+			txtArguments.Text = string.Empty;
+		}
+		
+		// Fix: Add null check for installation element and needsReboot attribute
+		var installationElements = installation.GetElementsByTagName("installation");
+		if (installationElements != null && installationElements.Count > 0 && 
+		    installationElements[0].Attributes["needsReboot"] != null)
+		{
+			chkRebootReq.Checked = installationElements[0].Attributes["needsReboot"].Value == "1";
+		}
+		else
+		{
+			chkRebootReq.Checked = false;
+		}
+		
+		// Auto-detect if we're editing a driver
+		if (frmItemList != null && frmItemList.isDriverProvider)
+		{
+			// Hide EULA checkbox for drivers (drivers don't have EULAs)
+			if (chkEULARequired != null)
+			{
+				chkEULARequired.Visible = false;
+			}
+			
+			// Adjust UI labels for driver updates
+			lblDetection.Text = "Hardware IDs:";
+			lblArguments.Text = "INF Command:";
+			lblGroup.Text = "Category (Hardware):";
+			
+			// For drivers, ensure group is 90700 and make it read-only
+			cmbGroup.Text = "90700";
+			cmbGroup.Enabled = false;
+		}
+		else
+		{
+			// Show EULA checkbox for Windows updates
+			if (chkEULARequired != null)
+			{
+				chkEULARequired.Visible = true;
+			}
+			
+			// Standard labels for Windows updates
+			lblDetection.Text = "Detection:";
+			lblArguments.Text = "Arguments:";
+			lblGroup.Text = "Group:";
+			
+			// For OS updates, enable group selection
+			cmbGroup.Enabled = true;
+		}
+		
+		osDetect(firstTime: true);
+		LoadPrerequisites();
+	}
+
+	private void osDetect(bool firstTime)
+	{
+		if (firstTime)
+		{
+			switch (frmItemList.provider)
+			{
+			case "win98se":
+				isWindows = true;
+				is9x = true;
+				break;
+			case "winme":
+				isWindows = true;
+				is9x = true;
+				break;
+			case "win2k":
+				isWindows = true;
+				is9x = false;
+				break;
+			case "winxp":
+				isWindows = true;
+				is9x = false;
+				break;
+			case "netserver":
+				isWindows = true;
+				is9x = false;
+				break;
+			default:
+				isWindows = false;
+				break;
+			}
+		}
+	}
+
+	private void cmbOS_SelectedIndexChanged(object sender, EventArgs e)
+	{
+		osDetect(firstTime: false);
+	}
+
+	private async void advancedWizard1_Finish(object sender, EventArgs e)
+	{
+		if (txtDetection.Text != null)
+		{
+			// Capture all UI values on the UI thread before entering Task.Run
+			string _cmbGroup = cmbGroup.Text;
+			bool _chkCritical = chkCritical.Checked;
+			bool _chkExclusive = chkExclusive.Checked;
+			bool _chkRebootReq = chkRebootReq.Checked;
+			DateTime _cmbDateValue = cmbDate.Value;
+			string _txtArguments = txtArguments.Text;
+			string _txtDetection = txtDetection.Text;
+
+			await Task.Run(delegate
+			{
+				for (int i = 0; i < upd.itemlines.Length; i++)
+				{
+					string[] array = upd.itemlines[i].Split(new string[1] { "@|" }, StringSplitOptions.None);
+					array[3] = _cmbGroup;
+					array[7] = (_chkCritical ? "3" : "4");
+					array[9] = _cmbDateValue.ToString("yyyy-MM-ddTHH:mm:ss.ffff");
+					array[10] = (_chkExclusive ? "1" : "0");
+					array[4] = _txtDetection;
+					XmlDocument xmlDocument = new XmlDocument();
+					xmlDocument.Load(new MemoryStream(Encoding.UTF8.GetBytes(array[5])));
+					
+					// Fix: Add null check for switches element
+					var switchesElements = xmlDocument.GetElementsByTagName("switches");
+					if (switchesElements != null && switchesElements.Count > 0)
+					{
+						switchesElements[0].InnerXml = _txtArguments;
+					}
+					
+					// Fix: Add null check for installation element and needsReboot attribute
+					var installationElements = xmlDocument.GetElementsByTagName("installation");
+					if (installationElements != null && installationElements.Count > 0)
+					{
+						var needsRebootAttr = installationElements[0].Attributes["needsReboot"];
+						if (needsRebootAttr != null)
+						{
+							needsRebootAttr.Value = (_chkRebootReq ? "1" : "0");
+						}
+						else
+						{
+							// Create the attribute if it doesn't exist
+							var attr = xmlDocument.CreateAttribute("needsReboot");
+							attr.Value = (_chkRebootReq ? "1" : "0");
+							installationElements[0].Attributes.Append(attr);
+						}
+					}
+					
+					array[5] = xmlDocument.OuterXml;
+					string text = string.Join("@|", array);
+					frmItemList.l_items[upd.itemindexes[i]] = text;
+				}
+			});
+
+			// Persist prerequisite changes into itemsindex (per-locale, matched by platform prefix).
+			WritePrerequisites();
+
+			frmItemList.p_items = 0;
+			frmItemList.u_items = null;
+			frmItemList.lstItemCol = new List<ListViewItem>();
+			frmItemList.lstItems.Items.Clear();
+			
+			// Check if BackgroundWorker is busy before starting it
+			if (!frmItemList.bw.IsBusy)
+			{
+				frmItemList.bw.RunWorkerAsync();
+			}
+			
+			MessageBox.Show("Update edited Sucessfully", frmMain.Text, MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
+			Dispose();
+		}
+		else
+		{
+			MessageBox.Show("You need to complete information", "Error", MessageBoxButtons.OK, MessageBoxIcon.Hand);
+		}
+	}
+
+	private void chkCritical_CheckedChanged(object sender, EventArgs e)
+	{
+		bool ce = !chkCritical.Checked;
+		cmbGroup.Enabled = ce;
+		if (chkCritical.Checked)
+		{
+			cmbGroup.SelectedIndex = 0;
+		}
+	}
+
+	// ================= Prerequisite editing =================
+	// Prerequisites live in itemsindex.txt after the "@|" as a comma-separated list of prerequisite
+	// itemIDs (minus the provider prefix). They must match the dependent's OS + locale, so we compute
+	// them per dependent line by finding a prerequisite variant that shares the same platform/locale prefix.
+
+	// itemsindex line = "<itemID>,<GUID>@|<dep1>,<dep2>,...". Returns the itemID (incl. provider prefix).
+	private static string ItemsIndexItemId(string line)
+	{
+		string beforeAt = line.Split(new string[] { "@|" }, StringSplitOptions.None)[0];
+		int lastComma = beforeAt.LastIndexOf(',');
+		return (lastComma > 0) ? beforeAt.Substring(0, lastComma) : beforeAt;
+	}
+
+	// Returns the dependency field (after "@|"), or "" if none.
+	private static string ItemsIndexDeps(string line)
+	{
+		string[] parts = line.Split(new string[] { "@|" }, StringSplitOptions.None);
+		return (parts.Length > 1) ? parts[1] : "";
+	}
+
+	// Extract the update code from an itemID: the token after "com_microsoft." up to the next '.'.
+	private static string CodeFromItemId(string itemId)
+	{
+		if (string.IsNullOrEmpty(itemId)) return null;
+		int idx = itemId.IndexOf("com_microsoft.", StringComparison.Ordinal);
+		if (idx < 0) return null;
+		string tail = itemId.Substring(idx + "com_microsoft.".Length);
+		int dot = tail.IndexOf('.');
+		return (dot >= 0) ? tail.Substring(0, dot) : tail;
+	}
+
+	// True if this itemsindex line belongs to the update being edited.
+	private bool LineBelongsToThisUpdate(string line)
+	{
+		string itemId = ItemsIndexItemId(line);
+		// itemsindex stores the code lowercased; items.txt (upd.code) is mixed-case, so compare loosely.
+		return itemId.IndexOf("com_microsoft." + upd.code + ".", StringComparison.OrdinalIgnoreCase) >= 0;
+	}
+
+	// Load the current prerequisite codes from this update's itemsindex lines.
+	private void LoadPrerequisites()
+	{
+		prereqCodes.Clear();
+		string[] idx = frmItemList.l_itemsindex;
+		if (idx != null)
+		{
+			foreach (string line in idx)
+			{
+				if (string.IsNullOrEmpty(line) || !LineBelongsToThisUpdate(line)) continue;
+				string deps = ItemsIndexDeps(line);
+				if (string.IsNullOrWhiteSpace(deps)) continue;
+				foreach (string dep in deps.Split(','))
+				{
+					if (string.IsNullOrWhiteSpace(dep)) continue;
+					string c = CodeFromItemId(dep.Trim());
+					if (!string.IsNullOrEmpty(c) && !prereqCodes.Contains(c)) prereqCodes.Add(c);
+				}
+			}
+		}
+		RefreshPrereqList();
+	}
+
+	private void RefreshPrereqList()
+	{
+		if (lstPrereqs == null) return;
+		lstPrereqs.Items.Clear();
+		foreach (string c in prereqCodes) lstPrereqs.Items.Add(c);
+	}
+
+	private void btnAddPrereq_Click(object sender, EventArgs e)
+	{
+		List<string> available = new List<string>();
+		string[] idx = frmItemList.l_itemsindex;
+		if (idx != null)
+		{
+			foreach (string line in idx)
+			{
+				if (string.IsNullOrEmpty(line)) continue;
+				string c = CodeFromItemId(ItemsIndexItemId(line));
+				if (string.IsNullOrEmpty(c) || string.Equals(c, upd.code, StringComparison.OrdinalIgnoreCase) || prereqCodes.Contains(c)) continue;
+				if (!available.Contains(c)) available.Add(c);
+			}
+		}
+		available.Sort(StringComparer.OrdinalIgnoreCase);
+		if (available.Count == 0)
+		{
+			MessageBox.Show("No other updates are available in this provider to use as prerequisites.", "Add Prerequisite", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			return;
+		}
+		foreach (string c in ShowPrereqPicker(available))
+		{
+			if (!prereqCodes.Contains(c)) prereqCodes.Add(c);
+		}
+		RefreshPrereqList();
+	}
+
+	private void btnRemovePrereq_Click(object sender, EventArgs e)
+	{
+		if (lstPrereqs.SelectedItem == null) return;
+		prereqCodes.Remove(lstPrereqs.SelectedItem.ToString());
+		RefreshPrereqList();
+	}
+
+	// Simple modal multi-select picker built in code (no separate designer file needed).
+	private List<string> ShowPrereqPicker(List<string> available)
+	{
+		List<string> result = new List<string>();
+		using (Form dlg = new Form())
+		{
+			dlg.Text = "Select Prerequisite(s)";
+			dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
+			dlg.StartPosition = FormStartPosition.CenterParent;
+			dlg.MinimizeBox = false;
+			dlg.MaximizeBox = false;
+			dlg.ShowIcon = false;
+			dlg.ShowInTaskbar = false;
+			dlg.ClientSize = new System.Drawing.Size(360, 320);
+			CheckedListBox clb = new CheckedListBox
+			{
+				Location = new System.Drawing.Point(10, 10),
+				Size = new System.Drawing.Size(340, 260),
+				CheckOnClick = true
+			};
+			foreach (string c in available) clb.Items.Add(c);
+			dlg.Controls.Add(clb);
+			Button ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new System.Drawing.Point(194, 282), Size = new System.Drawing.Size(75, 25) };
+			Button cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new System.Drawing.Point(275, 282), Size = new System.Drawing.Size(75, 25) };
+			dlg.Controls.Add(ok);
+			dlg.Controls.Add(cancel);
+			dlg.AcceptButton = ok;
+			dlg.CancelButton = cancel;
+			if (dlg.ShowDialog(this) == DialogResult.OK)
+			{
+				foreach (object it in clb.CheckedItems) result.Add(it.ToString());
+			}
+		}
+		return result;
+	}
+
+	// Find an itemsindex itemID (incl. provider prefix) for the given prerequisite code that shares the
+	// same platform/locale prefix as the dependent line (so prerequisite and dependent match OS + locale).
+	private string FindPrereqItemId(string prefix, string prereqCode)
+	{
+		string[] idx = frmItemList.l_itemsindex;
+		if (idx == null) return null;
+		string token = "com_microsoft." + prereqCode + ".";
+		foreach (string line in idx)
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+			string itemId = ItemsIndexItemId(line);
+			if (itemId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && itemId.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				return itemId;
+			}
+		}
+		return null;
+	}
+
+	// Rewrite the "@|" dependency field of every itemsindex line belonging to this update, using the
+	// currently selected prerequisite codes (empty when none). Called on the UI thread during Finish.
+	private void WritePrerequisites()
+	{
+		string[] idx = frmItemList.l_itemsindex;
+		if (idx == null) return;
+		string provPrefix = frmItemList.provider + ".";
+		for (int i = 0; i < idx.Length; i++)
+		{
+			string line = idx[i];
+			if (string.IsNullOrEmpty(line) || !LineBelongsToThisUpdate(line)) continue;
+			string itemId = ItemsIndexItemId(line);
+			int cmIdx = itemId.IndexOf("com_microsoft.", StringComparison.Ordinal);
+			if (cmIdx < 0) continue;
+			// Match a prerequisite that shares the same platform + locale (up to and including
+			// ".x86.<locale>."). The service pack / build may differ, matching the "same OS + locale"
+			// rule without requiring an identical service pack.
+			string prefix = itemId.Substring(0, cmIdx);
+			int x86 = itemId.IndexOf(".x86.", StringComparison.OrdinalIgnoreCase);
+			if (x86 >= 0)
+			{
+				int locStart = x86 + ".x86.".Length;
+				int locEnd = itemId.IndexOf('.', locStart);
+				if (locEnd > locStart) prefix = itemId.Substring(0, locEnd + 1);
+			}
+			List<string> deps = new List<string>();
+			foreach (string pc in prereqCodes)
+			{
+				string prereqItemId = FindPrereqItemId(prefix, pc);
+				if (prereqItemId == null) continue; // no matching locale/platform variant of this prerequisite
+				string depNoPrefix = prereqItemId.StartsWith(provPrefix, StringComparison.Ordinal)
+					? prereqItemId.Substring(provPrefix.Length)
+					: prereqItemId;
+				if (!deps.Contains(depNoPrefix)) deps.Add(depNoPrefix);
+			}
+			string beforeAt = line.Split(new string[] { "@|" }, StringSplitOptions.None)[0];
+			idx[i] = beforeAt + "@|" + string.Join(",", deps);
+		}
+	}
+
+	protected override void Dispose(bool disposing)
+	{
+		if (disposing && components != null)
+		{
+			components.Dispose();
+		}
+		base.Dispose(disposing);
+	}
+
+	private void InitializeComponent()
+	{
+		this.advancedWizard1 = new AdvancedWizardControl.Wizard.AdvancedWizard();
+		this.advancedWizardPage3 = new AdvancedWizardControl.WizardPages.AdvancedWizardPage();
+		this.txtDetection = new System.Windows.Forms.TextBox();
+		this.lblDetection = new System.Windows.Forms.Label();
+		this.txtArguments = new System.Windows.Forms.TextBox();
+		this.lblArguments = new System.Windows.Forms.Label();
+		this.advancedWizardPage2 = new AdvancedWizardControl.WizardPages.AdvancedWizardPage();
+		this.cmbDate = new System.Windows.Forms.DateTimePicker();
+		this.lblLanguage = new System.Windows.Forms.Label();
+		this.chkRebootReq = new System.Windows.Forms.CheckBox();
+		this.chkEULARequired = new System.Windows.Forms.CheckBox();
+		this.lblHelp0 = new System.Windows.Forms.Label();
+		this.cmbGroup = new System.Windows.Forms.ComboBox();
+		this.lblGroup = new System.Windows.Forms.Label();
+		this.lblExtras = new System.Windows.Forms.Label();
+		this.chkExclusive = new System.Windows.Forms.CheckBox();
+		this.chkCritical = new System.Windows.Forms.CheckBox();
+		this.lblHelp1 = new System.Windows.Forms.Label();
+		this.advancedWizard1.SuspendLayout();
+		this.advancedWizardPage3.SuspendLayout();
+		this.advancedWizardPage2.SuspendLayout();
+		base.SuspendLayout();
+		this.advancedWizard1.BackButtonEnabled = false;
+		this.advancedWizard1.BackButtonText = "< Back";
+		this.advancedWizard1.ButtonLayout = AdvancedWizardControl.Enums.ButtonLayoutKind.Office97;
+		this.advancedWizard1.ButtonsVisible = true;
+		this.advancedWizard1.CancelButtonText = "&Cancel";
+		this.advancedWizard1.Controls.Add(this.advancedWizardPage2);
+		this.advancedWizard1.Controls.Add(this.advancedWizardPage3);
+		this.advancedWizard1.CurrentPageIsFinishPage = false;
+		this.advancedWizard1.Dock = System.Windows.Forms.DockStyle.Fill;
+		this.advancedWizard1.FinishButton = true;
+		this.advancedWizard1.FinishButtonEnabled = true;
+		this.advancedWizard1.FinishButtonText = "&Finish";
+		this.advancedWizard1.FlatStyle = System.Windows.Forms.FlatStyle.Standard;
+		this.advancedWizard1.HelpButton = false;
+		this.advancedWizard1.HelpButtonText = "&Help";
+		this.advancedWizard1.Location = new System.Drawing.Point(0, 0);
+		this.advancedWizard1.Name = "advancedWizard1";
+		this.advancedWizard1.NextButtonEnabled = true;
+		this.advancedWizard1.NextButtonText = "Next >";
+		this.advancedWizard1.ProcessKeys = false;
+		this.advancedWizard1.Size = new System.Drawing.Size(440, 321);
+		this.advancedWizard1.TabIndex = 0;
+		this.advancedWizard1.TouchScreen = false;
+		this.advancedWizard1.WizardPages.Add(this.advancedWizardPage2);
+		this.advancedWizard1.WizardPages.Add(this.advancedWizardPage3);
+		this.advancedWizard1.Cancel += new System.EventHandler(advancedWizard1_Cancel);
+		this.advancedWizard1.Finish += new System.EventHandler(advancedWizard1_Finish);
+		this.lblPrereqs = new System.Windows.Forms.Label();
+		this.lstPrereqs = new System.Windows.Forms.ListBox();
+		this.btnAddPrereq = new System.Windows.Forms.Button();
+		this.btnRemovePrereq = new System.Windows.Forms.Button();
+		this.advancedWizardPage3.Controls.Add(this.txtDetection);
+		this.advancedWizardPage3.Controls.Add(this.lblDetection);
+		this.advancedWizardPage3.Controls.Add(this.txtArguments);
+		this.advancedWizardPage3.Controls.Add(this.lblArguments);
+		this.advancedWizardPage3.Controls.Add(this.lblPrereqs);
+		this.advancedWizardPage3.Controls.Add(this.lstPrereqs);
+		this.advancedWizardPage3.Controls.Add(this.btnAddPrereq);
+		this.advancedWizardPage3.Controls.Add(this.btnRemovePrereq);
+		this.lblPrereqs.AutoSize = true;
+		this.lblPrereqs.Location = new System.Drawing.Point(23, 219);
+		this.lblPrereqs.Name = "lblPrereqs";
+		this.lblPrereqs.Text = "Prerequisites:";
+		this.lstPrereqs.FormattingEnabled = true;
+		this.lstPrereqs.Location = new System.Drawing.Point(142, 216);
+		this.lstPrereqs.Name = "lstPrereqs";
+		this.lstPrereqs.Size = new System.Drawing.Size(200, 56);
+		this.lstPrereqs.TabIndex = 12;
+		this.btnAddPrereq.Location = new System.Drawing.Point(348, 216);
+		this.btnAddPrereq.Name = "btnAddPrereq";
+		this.btnAddPrereq.Size = new System.Drawing.Size(80, 23);
+		this.btnAddPrereq.TabIndex = 13;
+		this.btnAddPrereq.Text = "Add...";
+		this.btnAddPrereq.UseVisualStyleBackColor = true;
+		this.btnAddPrereq.Click += new System.EventHandler(btnAddPrereq_Click);
+		this.btnRemovePrereq.Location = new System.Drawing.Point(348, 245);
+		this.btnRemovePrereq.Name = "btnRemovePrereq";
+		this.btnRemovePrereq.Size = new System.Drawing.Size(80, 23);
+		this.btnRemovePrereq.TabIndex = 14;
+		this.btnRemovePrereq.Text = "Remove";
+		this.btnRemovePrereq.UseVisualStyleBackColor = true;
+		this.btnRemovePrereq.Click += new System.EventHandler(btnRemovePrereq_Click);
+		this.advancedWizardPage3.Dock = System.Windows.Forms.DockStyle.Fill;
+		this.advancedWizardPage3.Header = true;
+		this.advancedWizardPage3.HeaderBackgroundColor = System.Drawing.Color.White;
+		this.advancedWizardPage3.HeaderFont = new System.Drawing.Font("Tahoma", 10f, System.Drawing.FontStyle.Bold);
+		this.advancedWizardPage3.HeaderImage = WUv4Powertools.Properties.Resources.EditUpdate;
+		this.advancedWizardPage3.HeaderImageVisible = true;
+		this.advancedWizardPage3.HeaderTitle = "Edit an Update";
+		this.advancedWizardPage3.Location = new System.Drawing.Point(0, 0);
+		this.advancedWizardPage3.Name = "advancedWizardPage3";
+		this.advancedWizardPage3.PreviousPage = 0;
+		this.advancedWizardPage3.Size = new System.Drawing.Size(440, 281);
+		this.advancedWizardPage3.SubTitle = "Set download and installation options";
+		this.advancedWizardPage3.SubTitleFont = new System.Drawing.Font("Tahoma", 8f);
+		this.advancedWizardPage3.TabIndex = 3;
+		this.txtDetection.Location = new System.Drawing.Point(142, 111);
+		this.txtDetection.Multiline = true;
+		this.txtDetection.Name = "txtDetection";
+		this.txtDetection.Size = new System.Drawing.Size(286, 100);
+		this.txtDetection.TabIndex = 11;
+		this.lblDetection.AutoSize = true;
+		this.lblDetection.Location = new System.Drawing.Point(23, 114);
+		this.lblDetection.Name = "lblDetection";
+		this.lblDetection.Size = new System.Drawing.Size(56, 13);
+		this.lblDetection.TabIndex = 10;
+		this.lblDetection.Text = "Detection:";
+		this.txtArguments.Location = new System.Drawing.Point(142, 85);
+		this.txtArguments.Name = "txtArguments";
+		this.txtArguments.Size = new System.Drawing.Size(286, 20);
+		this.txtArguments.TabIndex = 9;
+		this.txtArguments.Text = "/q:a /r:n";
+		this.lblArguments.AutoSize = true;
+		this.lblArguments.Location = new System.Drawing.Point(23, 88);
+		this.lblArguments.Name = "lblArguments";
+		this.lblArguments.Size = new System.Drawing.Size(60, 13);
+		this.lblArguments.TabIndex = 8;
+		this.lblArguments.Text = "Arguments:";
+		this.advancedWizardPage2.Controls.Add(this.lblHelp1);
+		this.advancedWizardPage2.Controls.Add(this.cmbDate);
+		this.advancedWizardPage2.Controls.Add(this.lblLanguage);
+		this.advancedWizardPage2.Controls.Add(this.chkRebootReq);
+		this.advancedWizardPage2.Controls.Add(this.chkEULARequired);
+		this.advancedWizardPage2.Controls.Add(this.lblHelp0);
+		this.advancedWizardPage2.Controls.Add(this.cmbGroup);
+		this.advancedWizardPage2.Controls.Add(this.lblGroup);
+		this.advancedWizardPage2.Controls.Add(this.lblExtras);
+		this.advancedWizardPage2.Controls.Add(this.chkExclusive);
+		this.advancedWizardPage2.Controls.Add(this.chkCritical);
+		this.advancedWizardPage2.Dock = System.Windows.Forms.DockStyle.Fill;
+		this.advancedWizardPage2.Header = true;
+		this.advancedWizardPage2.HeaderBackgroundColor = System.Drawing.Color.White;
+		this.advancedWizardPage2.HeaderFont = new System.Drawing.Font("Tahoma", 10f, System.Drawing.FontStyle.Bold);
+		this.advancedWizardPage2.HeaderImage = WUv4Powertools.Properties.Resources.EditUpdate;
+		this.advancedWizardPage2.HeaderImageVisible = true;
+		this.advancedWizardPage2.HeaderTitle = "Edit an Update";
+		this.advancedWizardPage2.Location = new System.Drawing.Point(0, 0);
+		this.advancedWizardPage2.Name = "advancedWizardPage2";
+		this.advancedWizardPage2.PreviousPage = 0;
+		this.advancedWizardPage2.Size = new System.Drawing.Size(440, 281);
+		this.advancedWizardPage2.SubTitle = "Configure the date, group and exclusiveness of update";
+		this.advancedWizardPage2.SubTitleFont = new System.Drawing.Font("Tahoma", 8f);
+		this.advancedWizardPage2.TabIndex = 2;
+		this.cmbDate.Format = System.Windows.Forms.DateTimePickerFormat.Short;
+		this.cmbDate.Location = new System.Drawing.Point(338, 163);
+		this.cmbDate.Name = "cmbDate";
+		this.cmbDate.Size = new System.Drawing.Size(90, 20);
+		this.cmbDate.TabIndex = 17;
+		this.lblLanguage.AutoSize = true;
+		this.lblLanguage.Location = new System.Drawing.Point(23, 170);
+		this.lblLanguage.Name = "lblLanguage";
+		this.lblLanguage.Size = new System.Drawing.Size(33, 13);
+		this.lblLanguage.TabIndex = 16;
+		this.lblLanguage.Text = "Date:";
+		this.chkRebootReq.AutoSize = true;
+		this.chkRebootReq.CheckAlign = System.Drawing.ContentAlignment.MiddleRight;
+		this.chkRebootReq.Location = new System.Drawing.Point(207, 113);
+		this.chkRebootReq.Name = "chkRebootReq";
+		this.chkRebootReq.Size = new System.Drawing.Size(102, 17);
+		this.chkRebootReq.TabIndex = 8;
+		this.chkRebootReq.Text = "Reboot Needed";
+		this.chkRebootReq.UseVisualStyleBackColor = true;
+		this.chkEULARequired.AutoSize = true;
+		this.chkEULARequired.CheckAlign = System.Drawing.ContentAlignment.MiddleRight;
+		this.chkEULARequired.Enabled = false;
+		this.chkEULARequired.Location = new System.Drawing.Point(210, 90);
+		this.chkEULARequired.Name = "chkEULARequired";
+		this.chkEULARequired.Size = new System.Drawing.Size(99, 17);
+		this.chkEULARequired.TabIndex = 7;
+		this.chkEULARequired.Text = "Requires EULA";
+		this.chkEULARequired.UseVisualStyleBackColor = true;
+		this.lblHelp0.AutoSize = true;
+		this.lblHelp0.Location = new System.Drawing.Point(23, 229);
+		this.lblHelp0.Name = "lblHelp0";
+		this.lblHelp0.Size = new System.Drawing.Size(202, 52);
+		this.lblHelp0.TabIndex = 6;
+		this.lblHelp0.Text = "90602 = Critical Updates\r\n90609 = Recomended Updates\r\n90943 = Internet and Multimedia Updates\r\n90945 = Multi-Language Features";
+		this.cmbGroup.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+		this.cmbGroup.FormattingEnabled = true;
+		this.cmbGroup.Items.AddRange(new object[7] { "90602", "90609", "90943", "90944", "90945", "90949", "90952" });
+		this.cmbGroup.Location = new System.Drawing.Point(307, 198);
+		this.cmbGroup.Name = "cmbGroup";
+		this.cmbGroup.Size = new System.Drawing.Size(121, 21);
+		this.cmbGroup.TabIndex = 5;
+		this.lblGroup.AutoSize = true;
+		this.lblGroup.Location = new System.Drawing.Point(23, 201);
+		this.lblGroup.Name = "lblGroup";
+		this.lblGroup.Size = new System.Drawing.Size(39, 13);
+		this.lblGroup.TabIndex = 4;
+		this.lblGroup.Text = "Group:";
+		this.lblExtras.AutoSize = true;
+		this.lblExtras.Location = new System.Drawing.Point(23, 94);
+		this.lblExtras.Name = "lblExtras";
+		this.lblExtras.Size = new System.Drawing.Size(73, 13);
+		this.lblExtras.TabIndex = 3;
+		this.lblExtras.Text = "Extra Options:";
+		this.chkExclusive.AutoSize = true;
+		this.chkExclusive.CheckAlign = System.Drawing.ContentAlignment.MiddleRight;
+		this.chkExclusive.Location = new System.Drawing.Point(319, 113);
+		this.chkExclusive.Name = "chkExclusive";
+		this.chkExclusive.Size = new System.Drawing.Size(109, 17);
+		this.chkExclusive.TabIndex = 2;
+		this.chkExclusive.Text = "Exclusive Update";
+		this.chkExclusive.UseVisualStyleBackColor = true;
+		this.chkCritical.AutoSize = true;
+		this.chkCritical.CheckAlign = System.Drawing.ContentAlignment.MiddleRight;
+		this.chkCritical.Location = new System.Drawing.Point(333, 90);
+		this.chkCritical.Name = "chkCritical";
+		this.chkCritical.Size = new System.Drawing.Size(95, 17);
+		this.chkCritical.TabIndex = 1;
+		this.chkCritical.Text = "Critical Update";
+		this.chkCritical.UseVisualStyleBackColor = true;
+		this.chkCritical.CheckedChanged += new System.EventHandler(chkCritical_CheckedChanged);
+		this.lblHelp1.AutoSize = true;
+		this.lblHelp1.Location = new System.Drawing.Point(230, 229);
+		this.lblHelp1.Name = "lblHelp1";
+		this.lblHelp1.Size = new System.Drawing.Size(198, 39);
+		this.lblHelp1.TabIndex = 18;
+		this.lblHelp1.Text = "90944 = Additional Windows Downloads\r\n90949 = Windows Tools\r\n90952 = Advanced Security Updates";
+		base.AutoScaleDimensions = new System.Drawing.SizeF(6f, 13f);
+		base.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
+		this.BackColor = System.Drawing.SystemColors.Control;
+		base.ClientSize = new System.Drawing.Size(440, 321);
+		base.Controls.Add(this.advancedWizard1);
+		base.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedSingle;
+		base.MaximizeBox = false;
+		base.MinimizeBox = false;
+		base.Name = "frmEditUpdate";
+		base.ShowIcon = false;
+		base.ShowInTaskbar = false;
+		this.Text = "Edit an Update";
+		base.Load += new System.EventHandler(frmAddUpdate_Load);
+		this.advancedWizard1.ResumeLayout(false);
+		this.advancedWizardPage3.ResumeLayout(false);
+		this.advancedWizardPage3.PerformLayout();
+		this.advancedWizardPage2.ResumeLayout(false);
+		this.advancedWizardPage2.PerformLayout();
+		base.ResumeLayout(false);
+	}
+}

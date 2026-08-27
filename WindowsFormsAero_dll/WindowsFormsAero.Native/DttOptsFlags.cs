@@ -1,0 +1,18 @@
+using System;
+
+namespace WindowsFormsAero.Native;
+
+[Flags]
+internal enum DttOptsFlags
+{
+	DTT_TEXTCOLOR = 1,
+	DTT_BORDERCOLOR = 2,
+	DTT_SHADOWCOLOR = 4,
+	DTT_SHADOWTYPE = 8,
+	DTT_SHADOWOFFSET = 0x10,
+	DTT_BORDERSIZE = 0x20,
+	DTT_CALCRECT = 0x200,
+	DTT_APPLYOVERLAY = 0x400,
+	DTT_GLOWSIZE = 0x800,
+	DTT_COMPOSITED = 0x2000
+}
