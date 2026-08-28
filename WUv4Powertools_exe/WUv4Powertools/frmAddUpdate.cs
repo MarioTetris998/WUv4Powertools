@@ -800,6 +800,8 @@ public class frmAddUpdate : Form
 
 	private async void advancedWizard1_Finish(object sender, EventArgs e)
 	{
+		// Capture the dictionaries before changing them, so this can be taken back with Undo.
+		frmItemList.PushUndoState();
 		// Comprehensive input validation
 		if (string.IsNullOrWhiteSpace(txtUpdCode.Text))
 		{

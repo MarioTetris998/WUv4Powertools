@@ -35,6 +35,10 @@ public class frmMain : Form
 
 	private ToolStripSplitButton openToolStripButton;
 
+	private ToolStripButton btnUndo;
+
+	private ToolStripButton btnRedo;
+
 	private ToolStripButton saveToolStripButton;
 
 	private ToolStripButton btnRefresh;
@@ -370,6 +374,9 @@ public class frmMain : Form
 		{
 			return;
 		}
+		// Captured after the confirmation, so declining does not leave an undo step for a
+		// deletion that never happened.
+		frmItemList2.PushUndoState();
 		List<string> updateItems = new List<string>();
 		List<string> updateGuids = new List<string>();
 		List<string> langGuids = new List<string>();
@@ -615,6 +622,8 @@ public class frmMain : Form
 			return;
 		}
 
+		// Capture the dictionaries before repairing them, so this can be taken back with Undo.
+		list.PushUndoState();
 		// A split record has to be made whole before the other passes can make sense of it.
 		int rejoined = list.RepairSplitRecords();
 		int duplicates = list.SanitizeProvider();
@@ -861,6 +870,26 @@ public class frmMain : Form
 		UpdateStatusForTab();
 	}
 
+	private void undoToolStripMenuItem_Click(object sender, EventArgs e)
+	{
+		frmItemList list = mdiTabs.SelectedForm as frmItemList;
+		if (list != null)
+		{
+			list.Undo();
+			UpdateStatusForTab();
+		}
+	}
+
+	private void redoToolStripMenuItem_Click(object sender, EventArgs e)
+	{
+		frmItemList list = mdiTabs.SelectedForm as frmItemList;
+		if (list != null)
+		{
+			list.Redo();
+			UpdateStatusForTab();
+		}
+	}
+
 	// The item count and progress bar belong to the open provider, so they follow the active tab
 	// and are hidden entirely on tabs that hold no updates, such as the welcome page.
 	public void UpdateStatusForTab()
@@ -870,8 +899,16 @@ public class frmMain : Form
 		{
 			lblItems.Visible = false;
 			pbBusy.Visible = false;
+			btnUndo.Enabled = false;
+			btnRedo.Enabled = false;
+			undoToolStripMenuItem.Enabled = false;
+			redoToolStripMenuItem.Enabled = false;
 			return;
 		}
+		btnUndo.Enabled = list.CanUndo;
+		btnRedo.Enabled = list.CanRedo;
+		undoToolStripMenuItem.Enabled = list.CanUndo;
+		redoToolStripMenuItem.Enabled = list.CanRedo;
 		lblItems.Visible = true;
 		pbBusy.Visible = true;
 		lblItems.Text = list.VisibleItemCount + " items";
@@ -1131,11 +1168,11 @@ public class frmMain : Form
 		this.tsContainer.TabIndex = 15;
 		this.tsContainer.Text = "toolStripContainer1";
 		this.tsContainer.TopToolStripPanel.Controls.Add(this.menuStrip1);
-		// A ToolStripPanel lays its strips out in the order they are added, and the designer
-		// Location values are only hints it overrides. Adding the search strip first put it in
-		// the leftmost slot and pushed every button to the right of it.
-		this.tsContainer.TopToolStripPanel.Controls.Add(this.tbStandard);
+		// A ToolStripPanel lays its strips out in the order they are added and overrides the
+		// designer Location values, so add order is what actually decides the layout. Search goes
+		// in first, the buttons follow it, and both sit at the left edge with no gap between.
 		this.tsContainer.TopToolStripPanel.Controls.Add(this.tbSearch);
+		this.tsContainer.TopToolStripPanel.Controls.Add(this.tbStandard);
 		this.mdiTabs.AutoSize = true;
 		this.mdiTabs.BackColor = System.Drawing.SystemColors.Control;
 		this.mdiTabs.Dock = System.Windows.Forms.DockStyle.Fill;
@@ -1222,10 +1259,12 @@ public class frmMain : Form
 		this.undoToolStripMenuItem.ShortcutKeys = System.Windows.Forms.Keys.Z | System.Windows.Forms.Keys.Control;
 		this.undoToolStripMenuItem.Size = new System.Drawing.Size(144, 22);
 		this.undoToolStripMenuItem.Text = "&Undo";
+		this.undoToolStripMenuItem.Click += new System.EventHandler(undoToolStripMenuItem_Click);
 		this.redoToolStripMenuItem.Name = "redoToolStripMenuItem";
 		this.redoToolStripMenuItem.ShortcutKeys = System.Windows.Forms.Keys.Y | System.Windows.Forms.Keys.Control;
 		this.redoToolStripMenuItem.Size = new System.Drawing.Size(144, 22);
 		this.redoToolStripMenuItem.Text = "&Redo";
+		this.redoToolStripMenuItem.Click += new System.EventHandler(redoToolStripMenuItem_Click);
 		this.toolStripSeparator4.Name = "toolStripSeparator4";
 		this.toolStripSeparator4.Size = new System.Drawing.Size(141, 6);
 		this.cutToolStripMenuItem.Image = (System.Drawing.Image)resources.GetObject("cutToolStripMenuItem.Image");
@@ -1318,6 +1357,23 @@ public class frmMain : Form
 		this.txtSearch.Size = new System.Drawing.Size(150, 25);
 		this.txtSearch.TextChanged += new System.EventHandler(txtSearch_TextChanged);
 		this.tbStandard.Dock = System.Windows.Forms.DockStyle.None;
+		this.btnUndo = new System.Windows.Forms.ToolStripButton();
+		this.btnRedo = new System.Windows.Forms.ToolStripButton();
+		// Text rather than an icon, because the toolbar images live in the form's resource file
+		// and there is no artwork in there for these two.
+		this.btnUndo.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
+		this.btnUndo.Name = "btnUndo";
+		this.btnUndo.Text = "Undo";
+		this.btnUndo.ToolTipText = "Undo the last change to this provider";
+		this.btnUndo.Enabled = false;
+		this.btnUndo.Click += new System.EventHandler(undoToolStripMenuItem_Click);
+		this.btnRedo.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
+		this.btnRedo.Name = "btnRedo";
+		this.btnRedo.Text = "Redo";
+		this.btnRedo.ToolTipText = "Redo the change that was just undone";
+		this.btnRedo.Enabled = false;
+		this.btnRedo.Click += new System.EventHandler(redoToolStripMenuItem_Click);
+		this.tbStandard.Items.AddRange(new System.Windows.Forms.ToolStripItem[2] { this.btnUndo, this.btnRedo });
 		this.tbStandard.Items.AddRange(new System.Windows.Forms.ToolStripItem[18]
 		{
 			this.openToolStripButton, this.saveToolStripButton, this.btnRefresh, this.toolStripSeparator6, this.cutToolStripButton, this.copyToolStripButton, this.pasteToolStripButton, this.toolStripSeparator2, this.btnNewUpdate, this.btnEditUpdate,

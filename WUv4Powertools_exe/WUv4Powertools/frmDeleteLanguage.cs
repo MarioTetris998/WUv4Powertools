@@ -90,6 +90,8 @@ public class frmDeleteLanguage : Form
 
 	private void btnDelete_Click(object sender, EventArgs e)
 	{
+		// Capture the dictionaries before changing them, so this can be taken back with Undo.
+		frmItemList.PushUndoState();
 		if (cmbLang.Text != null)
 		{
 			foreach (UpdEdit upe in uLangs)

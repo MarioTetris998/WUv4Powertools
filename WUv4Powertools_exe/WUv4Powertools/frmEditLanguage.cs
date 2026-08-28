@@ -95,6 +95,8 @@ public class frmEditLanguage : Form
 
 	private void btnAdd_Click(object sender, EventArgs e)
 	{
+		// Capture the dictionaries before changing them, so this can be taken back with Undo.
+		frmItemList.PushUndoState();
 		if (cmbLang.Text != null && txtDLink.Text != null && txtFileName.Text != null)
 		{
 			foreach (UpdEdit upe in uLangs)

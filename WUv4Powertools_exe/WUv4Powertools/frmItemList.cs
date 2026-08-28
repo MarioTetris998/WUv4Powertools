@@ -29,6 +29,93 @@ public class frmItemList : Form
 	// keep their categories and everything else is left out rather than merely tinted.
 	private string searchFilter = string.Empty;
 
+	// One captured state of the five dictionaries. The arrays are copied but the strings inside are
+	// shared, so a snapshot costs a few hundred kilobytes even on the largest provider.
+	private sealed class DictionarySnapshot
+	{
+		public string[] Items;
+		public string[] ItemsIndex;
+		public string[] ItemStrings;
+		public string[] ItemStringsIndex;
+		public string[] Product2Items;
+	}
+
+	private readonly List<DictionarySnapshot> undoStates = new List<DictionarySnapshot>();
+
+	private readonly List<DictionarySnapshot> redoStates = new List<DictionarySnapshot>();
+
+	private const int MaxUndoDepth = 20;
+
+	public bool CanUndo
+	{
+		get { return undoStates.Count > 0; }
+	}
+
+	public bool CanRedo
+	{
+		get { return redoStates.Count > 0; }
+	}
+
+	// Call before anything that changes the dictionaries. Taking a new step forward discards the
+	// redo history, since redoing a change made before a different one no longer means anything.
+	public void PushUndoState()
+	{
+		undoStates.Add(CaptureState());
+		if (undoStates.Count > MaxUndoDepth)
+		{
+			undoStates.RemoveAt(0);
+		}
+		redoStates.Clear();
+	}
+
+	public bool Undo()
+	{
+		if (undoStates.Count == 0) return false;
+		redoStates.Add(CaptureState());
+		ApplyState(undoStates[undoStates.Count - 1]);
+		undoStates.RemoveAt(undoStates.Count - 1);
+		ReloadItems();
+		return true;
+	}
+
+	public bool Redo()
+	{
+		if (redoStates.Count == 0) return false;
+		undoStates.Add(CaptureState());
+		ApplyState(redoStates[redoStates.Count - 1]);
+		redoStates.RemoveAt(redoStates.Count - 1);
+		ReloadItems();
+		return true;
+	}
+
+	private DictionarySnapshot CaptureState()
+	{
+		DictionarySnapshot snapshot = new DictionarySnapshot();
+		snapshot.Items = CopyOf(l_items);
+		snapshot.ItemsIndex = CopyOf(l_itemsindex);
+		snapshot.ItemStrings = CopyOf(l_itemstrings);
+		snapshot.ItemStringsIndex = CopyOf(l_itemstringsindex);
+		snapshot.Product2Items = CopyOf(l_product2items);
+		return snapshot;
+	}
+
+	private void ApplyState(DictionarySnapshot snapshot)
+	{
+		l_items = snapshot.Items;
+		l_itemsindex = snapshot.ItemsIndex;
+		l_itemstrings = snapshot.ItemStrings;
+		l_itemstringsindex = snapshot.ItemStringsIndex;
+		l_product2items = snapshot.Product2Items;
+	}
+
+	private static string[] CopyOf(string[] source)
+	{
+		if (source == null) return null;
+		string[] copy = new string[source.Length];
+		Array.Copy(source, copy, source.Length);
+		return copy;
+	}
+
 	// Rows actually on screen, which is the filtered count once a search is active.
 	public int VisibleItemCount
 	{
@@ -927,6 +1014,8 @@ catch (Exception ex)
 			return false;
 		}
 
+		// Capture the dictionaries before repairing them, so this can be taken back with Undo.
+		PushUndoState();
 		// Rejoin first: a split record is not a duplicate and is not malformed XML in its own right,
 		// it is half a record, so the other passes cannot make sense of it until it is whole again.
 		int rejoined = RepairSplitRecords();

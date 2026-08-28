@@ -199,6 +199,8 @@ public class frmStringEditor : Form
 
 	private void btnAdd_Click(object sender, EventArgs e)
 	{
+		// Capture the dictionaries before changing them, so this can be taken back with Undo.
+		frmItemList.PushUndoState();
 		_ = langLineId;
 		if (langLine != null)
 		{

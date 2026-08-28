@@ -59,6 +59,8 @@ public class frmAddLanguage : Form
 
 	internal void addLang(HttpWebResponse response)
 	{
+		// Capture the dictionaries before changing them, so this can be taken back with Undo.
+		frmItemList.PushUndoState();
 		string[] _baseIndexes = baseIndexes.ToArray();
 		string _cmbLang = cmbLang.Text;
 		string _txtFileName = txtFileName.Text;

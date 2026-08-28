@@ -39,6 +39,8 @@ public class frmEditCode : Form
 
 	private void btnOK_Click(object sender, EventArgs e)
 	{
+		// Capture the dictionaries before changing them, so this can be taken back with Undo.
+		frmItemList.PushUndoState();
 		if (txtUpdCode.Text != null)
 		{
 			List<string> updateItems = new List<string>();

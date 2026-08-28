@@ -330,6 +330,8 @@ public class frmEditUpdate : Form
 
 	private async void advancedWizard1_Finish(object sender, EventArgs e)
 	{
+		// Capture the dictionaries before changing them, so this can be taken back with Undo.
+		frmItemList.PushUndoState();
 		if (txtDetection.Text != null)
 		{
 			// Capture all UI values on the UI thread before entering Task.Run
