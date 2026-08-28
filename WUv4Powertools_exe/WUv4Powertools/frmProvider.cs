@@ -110,7 +110,9 @@ public class frmProvider : Form
 						}
 						catch (Exception ex)
 						{
-							MessageBox.Show($"Error loading items: {ex.Message}", "Load Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+							// Recorded, not shown. This runs on the worker thread, and the prompt has to be
+							// raised from the UI thread in the completion handler below.
+							frmItemList2.loadError = ex;
 						}
 					};
 					frmItemList2.bw.RunWorkerCompleted += delegate
@@ -127,12 +129,12 @@ public class frmProvider : Form
 							{
 								frmItemList2.Invoke(new Action(() =>
 								{
-									AddItemsToList(frmItemList2);
+									CompleteLoad(frmItemList2);
 								}));
 							}
 							else
 							{
-								AddItemsToList(frmItemList2);
+								CompleteLoad(frmItemList2);
 							}
 						}
 						catch (Exception ex)
@@ -155,6 +157,26 @@ public class frmProvider : Form
 		}
 	}
 	
+	// Runs on the UI thread once the background load finishes. A load that threw usually means the
+	// dictionary files are damaged, so offer to repair them rather than leaving a dead tab behind.
+	private void CompleteLoad(frmItemList list)
+	{
+		if (list.loadError != null)
+		{
+			if (list.OfferCorruptionRepair())
+			{
+				// Deferred, because the worker is still finishing and cannot be restarted from inside
+				// its own completion handler.
+				list.BeginInvoke(new Action(delegate
+				{
+					list.ReloadItems();
+				}));
+			}
+			return;
+		}
+		AddItemsToList(list);
+	}
+
 	private void AddItemsToList(frmItemList frmItemList2)
 	{
 		try

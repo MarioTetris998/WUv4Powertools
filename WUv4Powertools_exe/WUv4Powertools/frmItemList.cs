@@ -755,6 +755,61 @@ catch (Exception ex)
 		return lineDelta;
 	}
 
+	// Set by the background load when building the list throws. The failure is dealt with on the UI
+	// thread by the completion handler, rather than a message box being raised from the worker.
+	public Exception loadError;
+
+	private bool repairOffered;
+
+	// Offers to repair an inventory that would not load. Returns true when the caller should try the
+	// load again. Only offered once per provider, so a repair that does not help cannot loop.
+	public bool OfferCorruptionRepair()
+	{
+		Exception failure = loadError;
+		loadError = null;
+		if (failure == null)
+		{
+			return false;
+		}
+
+		if (repairOffered)
+		{
+			MessageBox.Show("This inventory still could not be loaded after being repaired.\n\n" + failure.Message + "\n\nThe remaining damage has to be corrected by hand.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Hand);
+			return false;
+		}
+		repairOffered = true;
+
+		if (MessageBox.Show("This inventory could not be loaded and appears to be corrupted.\n\n" + failure.Message + "\n\nFix corrupted inventory?", "Windows Update v4.0 PowerTools", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+		{
+			return false;
+		}
+
+		int duplicates = SanitizeProvider();
+		int eulaFixed = RepairEulaEscaping();
+		List<string> stillBroken = FindCatalogBreakingRecords();
+
+		System.Text.StringBuilder sb = new System.Text.StringBuilder();
+		sb.AppendLine(duplicates + " duplicate lines were removed.");
+		sb.AppendLine(eulaFixed + " EULA links were escaped.");
+		if (stillBroken.Count > 0)
+		{
+			sb.AppendLine();
+			sb.AppendLine(stillBroken.Count + " records are still malformed and have to be corrected by hand:");
+			foreach (string problem in stillBroken.Take(5))
+			{
+				sb.AppendLine("    " + problem);
+			}
+			if (stillBroken.Count > 5)
+			{
+				sb.AppendLine("    and " + (stillBroken.Count - 5) + " more.");
+			}
+		}
+		sb.AppendLine();
+		sb.AppendLine("Nothing has been written yet. Save the provider to keep these repairs.");
+		MessageBox.Show(sb.ToString(), "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
+		return true;
+	}
+
 	// items.txt field 5 is the <installation> block and itemstrings.txt field 4 is the EULA link.
 	// The catalog page concatenates these raw into one XML document which the browser parses in a
 	// single shot, and that parse is all or nothing: one malformed record blanks the ENTIRE result
