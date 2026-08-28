@@ -550,39 +550,134 @@ public class frmMain : Form
 		// Persist any drag-reordering into the dictionaries (product2items order + keep every file in sync)
 		// on the UI thread before the background write, since it reads the ListView.
 		frmItemList2.ApplyDisplayOrder();
+
+		// Strip duplicates before anything is written. Repeated add and edit cycles used to compound
+		// duplicate lines until the provider stopped loading entirely.
+		int duplicatesRemoved = frmItemList2.SanitizeProvider();
+
+		string issues = frmItemList2.ValidateProvider();
+		if (issues != null)
+		{
+			if (MessageBox.Show("This provider has consistency problems:\n\n" + issues + "\nSave anyway?", "Windows Update v4.0 PowerTools", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+			{
+				return;
+			}
+		}
+
+		string providerDir = folderBrowserDialogSrc + "\\" + frmItemList2.provider;
 		pbBusy.Style = ProgressBarStyle.Marquee;
 		new Thread((ThreadStart)delegate
 		{
 			try
 			{
-				File.WriteAllLines($"{folderBrowserDialogSrc}\\{frmItemList2.provider}\\product2items.txt", frmItemList2.l_product2items, Encoding.GetEncoding("ISO-8859-1"));
-				File.WriteAllLines($"{folderBrowserDialogSrc}\\{frmItemList2.provider}\\itemsindex.txt", frmItemList2.l_itemsindex, Encoding.GetEncoding("ISO-8859-1"));
-				File.WriteAllLines($"{folderBrowserDialogSrc}\\{frmItemList2.provider}\\items.txt", frmItemList2.l_items, Encoding.GetEncoding("ISO-8859-1"));
-				File.WriteAllLines($"{folderBrowserDialogSrc}\\{frmItemList2.provider}\\itemstringsindex.txt", frmItemList2.l_itemstringsindex, Encoding.GetEncoding("ISO-8859-1"));
-				File.WriteAllLines($"{folderBrowserDialogSrc}\\{frmItemList2.provider}\\itemstrings.txt", frmItemList2.l_itemstrings, Encoding.Unicode);
+				SaveProviderFiles(providerDir, frmItemList2);
 				Invoke((MethodInvoker)delegate
 				{
 					pbBusy.Style = ProgressBarStyle.Blocks;
-					MessageBox.Show("The provider files are updated correctly!", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
+					string note = (duplicatesRemoved > 0) ? ("\n\n" + duplicatesRemoved + " duplicate lines were removed.") : "";
+					MessageBox.Show("The provider files are updated correctly!" + note, "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
 				});
 			}
 			catch (UnauthorizedAccessException)
 			{
 				Invoke((MethodInvoker)delegate
 				{
+					pbBusy.Style = ProgressBarStyle.Blocks;
 					MessageBox.Show("You don't have writing permissions to save on this files", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Hand);
 				});
 			}
-			catch (Exception ex2)
+			catch (Exception saveError)
 			{
-				Exception ex3 = ex2;
-				Exception ex4 = ex3;
+				Exception shown = saveError;
 				Invoke((MethodInvoker)delegate
 				{
-					MessageBox.Show(ex4.Message);
+					pbBusy.Style = ProgressBarStyle.Blocks;
+					MessageBox.Show("Nothing was written, the provider is unchanged.\n\n" + shown.Message, "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Hand);
 				});
 			}
 		}).Start();
+	}
+
+	// Writes the five dictionary files as one unit. Every file goes to a temp file first and is only
+	// swapped in once all five have been written, so a failure part way through leaves the provider
+	// exactly as it was. The catalog parses each file whole, so a half written provider stops loading
+	// altogether. The previous contents are kept alongside as .bak.
+	private static void SaveProviderFiles(string providerDir, frmItemList list)
+	{
+		Encoding latin1 = Encoding.GetEncoding("ISO-8859-1");
+		string[] names = new string[5] { "product2items.txt", "itemsindex.txt", "items.txt", "itemstringsindex.txt", "itemstrings.txt" };
+		string[][] payloads = new string[5][] { list.l_product2items, list.l_itemsindex, list.l_items, list.l_itemstringsindex, list.l_itemstrings };
+		Encoding[] encodings = new Encoding[5] { latin1, latin1, latin1, latin1, Encoding.Unicode };
+
+		string[] targets = new string[names.Length];
+		string[] temps = new string[names.Length];
+		for (int i = 0; i < names.Length; i++)
+		{
+			targets[i] = providerDir + "\\" + names[i];
+			temps[i] = targets[i] + ".tmp";
+		}
+
+		// Phase one. If any of these throw, the real files have not been touched at all.
+		try
+		{
+			for (int i = 0; i < names.Length; i++)
+			{
+				File.WriteAllLines(temps[i], payloads[i] ?? new string[0], encodings[i]);
+			}
+		}
+		catch
+		{
+			DeleteTempFiles(temps);
+			throw;
+		}
+
+		// Phase two. Swap each finished file in, keeping the old contents as .bak.
+		for (int i = 0; i < names.Length; i++)
+		{
+			if (!File.Exists(targets[i]))
+			{
+				File.Move(temps[i], targets[i]);
+				continue;
+			}
+			try
+			{
+				File.Replace(temps[i], targets[i], targets[i] + ".bak", true);
+			}
+			catch (PlatformNotSupportedException)
+			{
+				// File.Replace is not available on some network shares, and the WUR server is a UNC path.
+				ReplaceByCopy(temps[i], targets[i]);
+			}
+			catch (IOException)
+			{
+				ReplaceByCopy(temps[i], targets[i]);
+			}
+		}
+	}
+
+	private static void ReplaceByCopy(string temp, string target)
+	{
+		File.Copy(target, target + ".bak", true);
+		File.Copy(temp, target, true);
+		File.Delete(temp);
+	}
+
+	private static void DeleteTempFiles(string[] temps)
+	{
+		foreach (string temp in temps)
+		{
+			try
+			{
+				if (File.Exists(temp))
+				{
+					File.Delete(temp);
+				}
+			}
+			catch (IOException)
+			{
+				// A leftover temp file is harmless, it is overwritten on the next save.
+			}
+		}
 	}
 
 	private void btnEditUpdateLang_Click(object sender, EventArgs e)

@@ -614,6 +614,204 @@ catch (Exception ex)
 
 	// ================= Persisting display order (keep all dictionary files in sync) =================
 	// Main-site display order = itemID order within each product2items line. When the user drags to
+	// Removes duplicate entries from every dictionary file. Repeated add and edit cycles used to
+	// compound duplicate lines until a provider stopped loading at all, because the catalog parses
+	// each file as a whole. Called on save. Returns the number of duplicate lines removed.
+	public int SanitizeProvider()
+	{
+		int removed = 0;
+		removed += DedupExact(ref l_items);
+		removed += DedupExact(ref l_itemsindex);
+		removed += DedupExact(ref l_itemstringsindex);
+		removed += DedupExact(ref l_itemstrings);
+		removed += MergeProduct2Items(ref l_product2items);
+		return removed;
+	}
+
+	// Drops exact duplicate non empty lines, keeping the first occurrence and preserving order.
+	private static int DedupExact(ref string[] arr)
+	{
+		if (arr == null || arr.Length == 0)
+		{
+			return 0;
+		}
+		HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+		List<string> kept = new List<string>(arr.Length);
+		int removed = 0;
+		foreach (string line in arr)
+		{
+			if (string.IsNullOrEmpty(line))
+			{
+				kept.Add(line);
+				continue;
+			}
+			if (seen.Add(line))
+			{
+				kept.Add(line);
+			}
+			else
+			{
+				removed++;
+			}
+		}
+		if (removed > 0)
+		{
+			arr = kept.ToArray();
+		}
+		return removed;
+	}
+
+	// product2items must hold one line per key. Merges duplicate key lines and removes repeated
+	// item ids inside each line.
+	private static int MergeProduct2Items(ref string[] arr)
+	{
+		if (arr == null || arr.Length == 0)
+		{
+			return 0;
+		}
+		List<string> order = new List<string>();
+		Dictionary<string, List<string>> vals = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+		Dictionary<string, HashSet<string>> seenVals = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+		foreach (string line in arr)
+		{
+			if (string.IsNullOrEmpty(line))
+			{
+				continue;
+			}
+			string[] parts = line.Split(',');
+			string key = parts[0];
+			if (!vals.ContainsKey(key))
+			{
+				vals[key] = new List<string>();
+				seenVals[key] = new HashSet<string>(StringComparer.Ordinal);
+				order.Add(key);
+			}
+			for (int j = 1; j < parts.Length; j++)
+			{
+				if (parts[j].Length == 0)
+				{
+					continue;
+				}
+				if (seenVals[key].Add(parts[j]))
+				{
+					vals[key].Add(parts[j]);
+				}
+			}
+		}
+		List<string> merged = new List<string>(order.Count);
+		foreach (string key in order)
+		{
+			List<string> v = vals[key];
+			merged.Add((v.Count > 0) ? (key + "," + string.Join(",", v)) : key);
+		}
+		int lineDelta = arr.Length - merged.Count;
+		arr = merged.ToArray();
+		return lineDelta;
+	}
+
+	// Cross checks the five dictionary files against each other. Returns null when the provider is
+	// consistent, otherwise a human readable description of what does not line up. Code and id
+	// comparisons are case insensitive, because items.txt is mixed case while itemsindex and
+	// product2items hold the same codes lowercased.
+	public string ValidateProvider()
+	{
+		HashSet<string> itemGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (string line in l_items ?? new string[0])
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+			int comma = line.IndexOf(',');
+			if (comma > 0) itemGuids.Add(line.Substring(0, comma).Trim());
+		}
+
+		HashSet<string> indexKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		int orphanIndexGuids = 0;
+		foreach (string line in l_itemsindex ?? new string[0])
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+			int comma = line.LastIndexOf(',');
+			if (comma <= 0) continue;
+			indexKeys.Add(line.Substring(0, comma).Trim());
+			string guid = line.Substring(comma + 1).Replace("@|", "").Trim();
+			if (guid.Length > 0 && !itemGuids.Contains(guid)) orphanIndexGuids++;
+		}
+
+		int danglingRefs = 0;
+		foreach (string line in l_product2items ?? new string[0])
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+			string[] parts = line.Split(',');
+			for (int j = 1; j < parts.Length; j++)
+			{
+				string re = parts[j].Trim();
+				if (re.Length == 0) continue;
+				if (!indexKeys.Contains(provider + "." + re)) danglingRefs++;
+			}
+		}
+
+		HashSet<string> stringSetGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (string line in l_itemstrings ?? new string[0])
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+			int comma = line.IndexOf(',');
+			if (comma <= 0) continue;
+			string key = line.Substring(0, comma);
+			int dot = key.LastIndexOf('.');
+			stringSetGuids.Add(((dot >= 0) ? key.Substring(dot + 1) : key).Trim());
+		}
+
+		int missingStringRows = 0;
+		foreach (string line in l_itemstringsindex ?? new string[0])
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+			int comma = line.LastIndexOf(',');
+			if (comma <= 0) continue;
+			string target = line.Substring(comma + 1).Trim();
+			if (target.Length > 0 && !stringSetGuids.Contains(target)) missingStringRows++;
+		}
+
+		if (orphanIndexGuids == 0 && danglingRefs == 0 && missingStringRows == 0)
+		{
+			return null;
+		}
+		System.Text.StringBuilder sb = new System.Text.StringBuilder();
+		if (orphanIndexGuids > 0) sb.AppendLine(orphanIndexGuids + " itemsindex entries point at an update that has no items.txt row.");
+		if (danglingRefs > 0) sb.AppendLine(danglingRefs + " product2items references do not resolve to an itemsindex entry, so clients are offered updates that cannot be downloaded.");
+		if (missingStringRows > 0) sb.AppendLine(missingStringRows + " itemstringsindex entries point at a itemstrings row that does not exist.");
+		return sb.ToString();
+	}
+
+	// Removes product2items references that resolve to nothing. These are what make a client offer
+	// an update it cannot then download, which is most common on locales that were never built out.
+	// Returns the number of references dropped.
+	public int RepairDanglingReferences()
+	{
+		if (l_product2items == null || l_itemsindex == null) return 0;
+		HashSet<string> indexKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (string line in l_itemsindex)
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+			int comma = line.LastIndexOf(',');
+			if (comma > 0) indexKeys.Add(line.Substring(0, comma).Trim());
+		}
+		int dropped = 0;
+		List<string> rebuilt = new List<string>(l_product2items.Length);
+		foreach (string line in l_product2items)
+		{
+			if (string.IsNullOrEmpty(line)) { rebuilt.Add(line); continue; }
+			string[] parts = line.Split(',');
+			List<string> keep = new List<string>(parts.Length);
+			for (int j = 1; j < parts.Length; j++)
+			{
+				string re = parts[j].Trim();
+				if (re.Length == 0) continue;
+				if (indexKeys.Contains(provider + "." + re)) keep.Add(parts[j]); else dropped++;
+			}
+			rebuilt.Add((keep.Count > 0) ? (parts[0] + "," + string.Join(",", keep)) : parts[0]);
+		}
+		if (dropped > 0) l_product2items = rebuilt.ToArray();
+		return dropped;
+	}
+
 	// reorder, ApplyDisplayOrder() rewrites product2items to the on-screen order AND relocates every
 	// affected update's lines in items/itemsindex/itemstringsindex/itemstrings so each update's entries
 	// stay contiguous and in the same relative order across every file. Call on the UI thread (it reads
