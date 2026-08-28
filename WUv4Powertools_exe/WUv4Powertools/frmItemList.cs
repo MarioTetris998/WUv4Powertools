@@ -755,11 +755,16 @@ catch (Exception ex)
 		return lineDelta;
 	}
 
-	// Cross checks the five dictionary files against each other. Returns null when the provider is
-	// consistent, otherwise a human readable description of what does not line up. Code and id
-	// comparisons are case insensitive, because items.txt is mixed case while itemsindex and
-	// product2items hold the same codes lowercased.
-	public string ValidateProvider()
+	// Cross checks the five dictionary files against each other. Returns null when nothing is broken,
+	// otherwise a description of the damage. Code and id comparisons are case insensitive, because
+	// items.txt is mixed case while itemsindex and product2items hold the same codes lowercased.
+	//
+	// coverageGaps is reported separately and is NOT damage. A product2items reference with no
+	// itemsindex entry means that update is simply not present for that locale, which is the normal
+	// state for any language whose files have not been obtained. The client offers nothing for it.
+	// Only genuine breakage, where an entry points at a row that should exist but does not, is
+	// treated as a problem worth blocking a save over.
+	public string ValidateProvider(out int coverageGaps)
 	{
 		HashSet<string> itemGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 		foreach (string line in l_items ?? new string[0])
@@ -815,14 +820,14 @@ catch (Exception ex)
 			if (target.Length > 0 && !stringSetGuids.Contains(target)) missingStringRows++;
 		}
 
-		if (orphanIndexGuids == 0 && danglingRefs == 0 && missingStringRows == 0)
+		coverageGaps = danglingRefs;
+		if (orphanIndexGuids == 0 && missingStringRows == 0)
 		{
 			return null;
 		}
 		System.Text.StringBuilder sb = new System.Text.StringBuilder();
-		if (orphanIndexGuids > 0) sb.AppendLine(orphanIndexGuids + " itemsindex entries point at an update that has no items.txt row.");
-		if (danglingRefs > 0) sb.AppendLine(danglingRefs + " product2items references do not resolve to an itemsindex entry, so clients are offered updates that cannot be downloaded.");
-		if (missingStringRows > 0) sb.AppendLine(missingStringRows + " itemstringsindex entries point at a itemstrings row that does not exist.");
+		if (orphanIndexGuids > 0) sb.AppendLine(orphanIndexGuids + " itemsindex entries point at an update with no items.txt row, so the update resolves to nothing.");
+		if (missingStringRows > 0) sb.AppendLine(missingStringRows + " itemstringsindex entries point at an itemstrings row that does not exist, so the title and description are missing.");
 		return sb.ToString();
 	}
 

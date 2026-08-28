@@ -549,10 +549,13 @@ public class frmMain : Form
 		// duplicate lines until the provider stopped loading entirely.
 		int duplicatesRemoved = frmItemList2.SanitizeProvider();
 
-		string issues = frmItemList2.ValidateProvider();
+		// Coverage gaps are deliberate (an update simply is not held for that locale) so they are not
+		// raised here. Only actual damage stops a save.
+		int coverageGaps;
+		string issues = frmItemList2.ValidateProvider(out coverageGaps);
 		if (issues != null)
 		{
-			if (MessageBox.Show("This provider has consistency problems:\n\n" + issues + "\nSave anyway?", "Windows Update v4.0 PowerTools", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+			if (MessageBox.Show("This provider has damaged entries:\n\n" + issues + "\nSave anyway?", "Windows Update v4.0 PowerTools", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
 			{
 				return;
 			}
@@ -605,8 +608,10 @@ public class frmMain : Form
 		}
 
 		int duplicates = list.SanitizeProvider();
-		string issues = list.ValidateProvider();
-		if (issues == null && duplicates == 0)
+		int coverageGaps;
+		string issues = list.ValidateProvider(out coverageGaps);
+
+		if (issues == null && duplicates == 0 && coverageGaps == 0)
 		{
 			MessageBox.Show("This provider is consistent. Nothing needed repairing.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
 			return;
@@ -619,22 +624,27 @@ public class frmMain : Form
 		}
 		if (issues != null)
 		{
-			report += "\n" + issues;
+			report += "\nDamaged entries:\n" + issues;
+		}
+		if (coverageGaps > 0)
+		{
+			// Not a fault. These are updates that are simply not held for a given locale.
+			report += "\n" + coverageGaps + " product2items references have no matching update in this provider.\nThat is expected for any language whose update files you do not have, and those entries are simply not offered.\n";
 		}
 
-		if (issues == null)
+		if (coverageGaps == 0)
 		{
 			MessageBox.Show(report + "\nSave the provider to write this to disk.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
 			return;
 		}
 
-		if (MessageBox.Show(report + "\nDrop the references that resolve to nothing?", "Windows Update v4.0 PowerTools", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+		if (MessageBox.Show(report + "\nRemove those references anyway? Only do this if you never intend to add those updates.", "Windows Update v4.0 PowerTools", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
 		{
 			return;
 		}
 
 		int dropped = list.RepairDanglingReferences();
-		MessageBox.Show(dropped + " unresolvable references were dropped.\n\nSave the provider to write this to disk.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
+		MessageBox.Show(dropped + " references were removed.\n\nSave the provider to write this to disk.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
 	}
 
 	// Puts back the .bak files written by the last save. Saving keeps the previous contents of every
