@@ -607,6 +607,8 @@ public class frmMain : Form
 			return;
 		}
 
+		// A split record has to be made whole before the other passes can make sense of it.
+		int rejoined = list.RepairSplitRecords();
 		int duplicates = list.SanitizeProvider();
 		// Escaping the EULA link is mechanical, so it is simply done. A malformed installation
 		// block cannot be rewritten safely and is only ever reported.
@@ -614,13 +616,17 @@ public class frmMain : Form
 		int coverageGaps;
 		string issues = list.ValidateProvider(out coverageGaps);
 
-		if (issues == null && duplicates == 0 && eulaFixed == 0 && coverageGaps == 0)
+		if (issues == null && rejoined == 0 && duplicates == 0 && eulaFixed == 0 && coverageGaps == 0)
 		{
 			MessageBox.Show("This provider is consistent. Nothing needed repairing.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
 			return;
 		}
 
 		string report = "";
+		if (rejoined > 0)
+		{
+			report += rejoined + " split records were joined back together.\n";
+		}
 		if (duplicates > 0)
 		{
 			report += duplicates + " duplicate lines were removed.\n";

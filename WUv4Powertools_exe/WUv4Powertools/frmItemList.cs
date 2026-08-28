@@ -755,6 +755,64 @@ catch (Exception ex)
 		return lineDelta;
 	}
 
+	// Every items.txt record opens with a GUID and a comma. Every record in the other four files
+	// opens with the provider name and a dot.
+	private static readonly System.Text.RegularExpressions.Regex ItemsRecordStart =
+		new System.Text.RegularExpressions.Regex(@"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12},");
+
+	// A stray newline inside a record splits one logical line into two physical ones. That cuts the
+	// installation block in half, which is what makes the catalog fail to parse and blanks the whole
+	// result list. Because a record's opening is recognisable, a line that does not open one is a
+	// continuation of the line above and can be joined back on. Returns the number of lines rejoined.
+	public int RepairSplitRecords()
+	{
+		int joins = 0;
+		joins += RejoinRecords(ref l_items, null);
+		joins += RejoinRecords(ref l_itemsindex, provider + ".");
+		joins += RejoinRecords(ref l_itemstringsindex, provider + ".");
+		joins += RejoinRecords(ref l_itemstrings, provider + ".");
+		joins += RejoinRecords(ref l_product2items, provider + ".");
+		return joins;
+	}
+
+	// expectedPrefix null means use the items.txt GUID rule instead of a provider prefix.
+	private static int RejoinRecords(ref string[] arr, string expectedPrefix)
+	{
+		if (arr == null || arr.Length == 0)
+		{
+			return 0;
+		}
+		List<string> joined = new List<string>(arr.Length);
+		int lastRecord = -1;
+		int joins = 0;
+		foreach (string line in arr)
+		{
+			if (string.IsNullOrEmpty(line))
+			{
+				joined.Add(line);
+				continue;
+			}
+			bool startsRecord = (expectedPrefix == null)
+				? ItemsRecordStart.IsMatch(line)
+				: line.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase);
+			if (startsRecord || lastRecord < 0)
+			{
+				joined.Add(line);
+				lastRecord = joined.Count - 1;
+			}
+			else
+			{
+				joined[lastRecord] = joined[lastRecord] + line;
+				joins++;
+			}
+		}
+		if (joins > 0)
+		{
+			arr = joined.ToArray();
+		}
+		return joins;
+	}
+
 	// Set by the background load when building the list throws. The failure is dealt with on the UI
 	// thread by the completion handler, rather than a message box being raised from the worker.
 	public Exception loadError;
@@ -784,11 +842,15 @@ catch (Exception ex)
 			return false;
 		}
 
+		// Rejoin first: a split record is not a duplicate and is not malformed XML in its own right,
+		// it is half a record, so the other passes cannot make sense of it until it is whole again.
+		int rejoined = RepairSplitRecords();
 		int duplicates = SanitizeProvider();
 		int eulaFixed = RepairEulaEscaping();
 		List<string> stillBroken = FindCatalogBreakingRecords();
 
 		System.Text.StringBuilder sb = new System.Text.StringBuilder();
+		sb.AppendLine(rejoined + " split records were joined back together.");
 		sb.AppendLine(duplicates + " duplicate lines were removed.");
 		sb.AppendLine(eulaFixed + " EULA links were escaped.");
 		if (stillBroken.Count > 0)
