@@ -119,6 +119,8 @@ public class frmMain : Form
 
 	private ToolStripMenuItem toolsToolStripMenuItem;
 
+	private ToolStripMenuItem restoreBackupToolStripMenuItem;
+
 	private ToolStripMenuItem repairProviderToolStripMenuItem;
 
 	private ToolStripMenuItem customizeToolStripMenuItem;
@@ -433,12 +435,7 @@ public class frmMain : Form
 		frmItemList2.l_itemsindex = frmItemList2.l_itemsindex.Where((string x) => !string.IsNullOrEmpty(x)).ToArray();
 		frmItemList2.l_itemstringsindex = frmItemList2.l_itemstringsindex.Where((string x) => !string.IsNullOrEmpty(x)).ToArray();
 		frmItemList2.l_itemstrings = frmItemList2.l_itemstrings.Where((string x) => !string.IsNullOrEmpty(x)).ToArray();
-		frmItemList2.p_items = 0;
-		frmItemList2.u_items = null;
-		frmItemList2.lstItemCol = new List<ListViewItem>();
-		frmItemList2.lstItems.Items.Clear();
-		frmItemList2.bw.RunWorkerCompleted += (s, ev) => { frmItemList2.OrganizeIntoGroups(); };
-		frmItemList2.bw.RunWorkerAsync();
+		frmItemList2.ReloadItems();
 		MessageBox.Show("Update deleted Sucessfully", Text, MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
 	}
 
@@ -496,12 +493,7 @@ public class frmMain : Form
 				}
 			}
 		}
-		frmItemList2.p_items = 0;
-		frmItemList2.u_items = null;
-		frmItemList2.lstItemCol = new List<ListViewItem>();
-		frmItemList2.lstItems.Items.Clear();
-		frmItemList2.bw.RunWorkerCompleted += (s, ev) => { frmItemList2.OrganizeIntoGroups(); };
-		frmItemList2.bw.RunWorkerAsync();
+		frmItemList2.ReloadItems();
 	}
 
 	public string TranslateText(string input, string inLang, string outLang)
@@ -645,6 +637,70 @@ public class frmMain : Form
 		MessageBox.Show(dropped + " unresolvable references were dropped.\n\nSave the provider to write this to disk.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
 	}
 
+	// Puts back the .bak files written by the last save. Saving keeps the previous contents of every
+	// file alongside it, so this is a single step undo for a save that turned out to be wrong.
+	private void restoreBackupToolStripMenuItem_Click(object sender, EventArgs e)
+	{
+		frmItemList list = mdiTabs.SelectedForm as frmItemList;
+		if (list == null)
+		{
+			MessageBox.Show("Open a provider first.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			return;
+		}
+
+		string providerDir = folderBrowserDialogSrc + "\\" + list.provider;
+		DateTime newest = DateTime.MinValue;
+		int found = 0;
+		foreach (string name in DictionaryFileNames)
+		{
+			string backup = providerDir + "\\" + name + ".bak";
+			if (!File.Exists(backup))
+			{
+				continue;
+			}
+			found++;
+			DateTime stamp = File.GetLastWriteTime(backup);
+			if (stamp > newest)
+			{
+				newest = stamp;
+			}
+		}
+
+		if (found == 0)
+		{
+			MessageBox.Show("There is no backup for this provider yet. A backup is written every time you save.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			return;
+		}
+
+		if (MessageBox.Show("Put back the files saved at " + newest.ToString() + "?\n\nThis discards everything saved since then.", "Windows Update v4.0 PowerTools", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+		{
+			return;
+		}
+
+		try
+		{
+			foreach (string name in DictionaryFileNames)
+			{
+				string target = providerDir + "\\" + name;
+				string backup = target + ".bak";
+				if (File.Exists(backup))
+				{
+					File.Copy(backup, target, true);
+				}
+			}
+		}
+		catch (Exception restoreError)
+		{
+			MessageBox.Show("The backup could not be put back:\n\n" + restoreError.Message, "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Hand);
+			return;
+		}
+
+		MessageBox.Show("The provider files were put back. Close this provider and open it again to load them.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
+	}
+
+	// The five files that make up a provider, in the order they are written.
+	private static readonly string[] DictionaryFileNames = new string[5] { "product2items.txt", "itemsindex.txt", "items.txt", "itemstringsindex.txt", "itemstrings.txt" };
+
 	// Writes the five dictionary files as one unit. Every file goes to a temp file first and is only
 	// swapped in once all five have been written, so a failure part way through leaves the provider
 	// exactly as it was. The catalog parses each file whole, so a half written provider stops loading
@@ -652,7 +708,7 @@ public class frmMain : Form
 	private static void SaveProviderFiles(string providerDir, frmItemList list)
 	{
 		Encoding latin1 = Encoding.GetEncoding("ISO-8859-1");
-		string[] names = new string[5] { "product2items.txt", "itemsindex.txt", "items.txt", "itemstringsindex.txt", "itemstrings.txt" };
+		string[] names = DictionaryFileNames;
 		string[][] payloads = new string[5][] { list.l_product2items, list.l_itemsindex, list.l_items, list.l_itemstringsindex, list.l_itemstrings };
 		Encoding[] encodings = new Encoding[5] { latin1, latin1, latin1, latin1, Encoding.Unicode };
 
@@ -736,12 +792,7 @@ public class frmMain : Form
 	private void btnRefresh_Click(object sender, EventArgs e)
 	{
 		frmItemList obj = (frmItemList)mdiTabs.SelectedForm;
-		obj.p_items = 0;
-		obj.u_items = null;
-		obj.lstItemCol = new List<ListViewItem>();
-		obj.lstItems.Items.Clear();
-		obj.bw.RunWorkerCompleted += (s, ev) => { obj.OrganizeIntoGroups(); };
-		obj.bw.RunWorkerAsync();
+		obj.ReloadItems();
 	}
 
 	private void cmbLanguage_SelectedIndexChanged(object sender, EventArgs e)
@@ -749,10 +800,7 @@ public class frmMain : Form
 		try
 		{
 			frmItemList obj = (frmItemList)base.Tag;
-			obj.lstItems.Items.Clear();
-			obj.p_items = 0;
-			obj.bw.RunWorkerCompleted += (s, ev) => { obj.OrganizeIntoGroups(); };
-			obj.bw.RunWorkerAsync();
+			obj.ReloadItems();
 		}
 		catch
 		{
@@ -1017,6 +1065,7 @@ public class frmMain : Form
 		this.toolStripSeparator5 = new System.Windows.Forms.ToolStripSeparator();
 		this.selectAllToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.toolsToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+		this.restoreBackupToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.repairProviderToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.customizeToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.optionsToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
@@ -1190,7 +1239,11 @@ public class frmMain : Form
 		this.selectAllToolStripMenuItem.Name = "selectAllToolStripMenuItem";
 		this.selectAllToolStripMenuItem.Size = new System.Drawing.Size(144, 22);
 		this.selectAllToolStripMenuItem.Text = "Select &All";
-		this.toolsToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[3] { this.repairProviderToolStripMenuItem, this.customizeToolStripMenuItem, this.optionsToolStripMenuItem });
+		this.toolsToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[4] { this.repairProviderToolStripMenuItem, this.restoreBackupToolStripMenuItem, this.customizeToolStripMenuItem, this.optionsToolStripMenuItem });
+		this.restoreBackupToolStripMenuItem.Name = "restoreBackupToolStripMenuItem";
+		this.restoreBackupToolStripMenuItem.Size = new System.Drawing.Size(190, 22);
+		this.restoreBackupToolStripMenuItem.Text = "&Undo Last Save";
+		this.restoreBackupToolStripMenuItem.Click += new System.EventHandler(restoreBackupToolStripMenuItem_Click);
 		this.repairProviderToolStripMenuItem.Name = "repairProviderToolStripMenuItem";
 		this.repairProviderToolStripMenuItem.Size = new System.Drawing.Size(190, 22);
 		this.repairProviderToolStripMenuItem.Text = "&Validate and Repair Provider";

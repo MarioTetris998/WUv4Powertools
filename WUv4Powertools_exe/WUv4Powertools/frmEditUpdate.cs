@@ -121,6 +121,13 @@ public class frmEditUpdate : Form
 	// Selected prerequisite update codes (provider-agnostic update codes, e.g. "811630_W98_5928").
 	private List<string> prereqCodes = new List<string>();
 
+	// IE OS targeting (edit which operating systems an IE update is displayed on).
+	private bool isIEUpdate = false;
+	private Label lblIEOS;
+	private readonly Dictionary<string, CheckBox> ieOSChecks = new Dictionary<string, CheckBox>();
+	// The OS names, in order, that each IE provider is allowed to target (static mapping, matches the Add wizard).
+	private static readonly string[] AllIEOSes = { "Windows 98", "Windows ME", "Windows 2000", "Windows XP", "Windows Server 2003" };
+
 	public frmEditUpdate(frmItemList frmItemList, frmMain frmMain, Update upd)
 	{
 		this.upd = upd;
@@ -206,6 +213,81 @@ public class frmEditUpdate : Form
 		
 		osDetect(firstTime: true);
 		LoadPrerequisites();
+
+		// IE updates: let the user edit which operating systems the update is displayed on.
+		if (frmItemList != null && (frmItemList.provider == "ie50x" || frmItemList.provider == "ie55x" || frmItemList.provider == "ie60x"))
+		{
+			isIEUpdate = true;
+			InitializeIEOSEditControls();
+		}
+	}
+
+	private List<string> AllowedIEOSes()
+	{
+		switch (frmItemList.provider)
+		{
+			case "ie50x": return new List<string> { "Windows 98", "Windows 2000" };
+			case "ie55x": return new List<string> { "Windows 98", "Windows ME", "Windows 2000" };
+			default: return new List<string>(AllIEOSes); // ie60x: all five
+		}
+	}
+
+	// The platform substring that identifies each OS inside an itemID.
+	private static string IEOSPlatformToken(string os)
+	{
+		switch (os)
+		{
+			case "Windows 98": return ".ver_platform_win32_windows.4.10.x86.";
+			case "Windows ME": return ".ver_platform_win32_windows.4.90.x86.";
+			case "Windows 2000": return ".ver_platform_win32_nt.5.0.x86.";
+			case "Windows XP": return ".ver_platform_win32_nt.5.1.x86.";
+			case "Windows Server 2003": return ".ver_platform_win32_nt.5.2.x86.";
+			default: return null;
+		}
+	}
+
+	// Does this update currently have any itemsindex line for the given OS?
+	private bool IEOSIsCovered(string os)
+	{
+		string token = IEOSPlatformToken(os);
+		string[] idx = frmItemList.l_itemsindex;
+		if (idx == null || token == null) return false;
+		foreach (string line in idx)
+		{
+			if (string.IsNullOrEmpty(line) || !LineBelongsToThisUpdate(line)) continue;
+			if (ItemsIndexItemId(line).IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+		}
+		return false;
+	}
+
+	private void InitializeIEOSEditControls()
+	{
+		lblIEOS = new Label
+		{
+			AutoSize = true,
+			Location = new System.Drawing.Point(23, 292),
+			Text = "Display on Operating Systems:"
+		};
+		this.advancedWizardPage2.Controls.Add(lblIEOS);
+
+		List<string> allowed = AllowedIEOSes();
+		int x = 23;
+		int y = 312;
+		foreach (string os in allowed)
+		{
+			CheckBox chk = new CheckBox
+			{
+				AutoSize = true,
+				Location = new System.Drawing.Point(x, y),
+				Text = os,
+				Checked = IEOSIsCovered(os),
+				Tag = os
+			};
+			this.advancedWizardPage2.Controls.Add(chk);
+			ieOSChecks[os] = chk;
+			x += os.Length > 12 ? 130 : 95;
+			if (x > 360) { x = 23; y += 24; }
+		}
 	}
 
 	private void osDetect(bool firstTime)
@@ -259,8 +341,23 @@ public class frmEditUpdate : Form
 			string _txtArguments = txtArguments.Text;
 			string _txtDetection = txtDetection.Text;
 
+			// Capture IE OS checkbox state on the UI thread (can't read controls from the background thread).
+			List<string> _desiredIEOSes = null;
+			if (isIEUpdate)
+			{
+				_desiredIEOSes = new List<string>();
+				foreach (var kv in ieOSChecks)
+				{
+					if (kv.Value.Checked) _desiredIEOSes.Add(kv.Key);
+				}
+			}
+
 			await Task.Run(delegate
 			{
+				// Add/remove itemsindex + product2items entries so the IE update is shown on exactly the
+				// checked operating systems. Done before prerequisites so new OS lines get their deps too.
+				if (isIEUpdate) ApplyIEOSChanges(_desiredIEOSes);
+
 				for (int i = 0; i < upd.itemlines.Length; i++)
 				{
 					string[] array = upd.itemlines[i].Split(new string[1] { "@|" }, StringSplitOptions.None);
@@ -301,10 +398,11 @@ public class frmEditUpdate : Form
 					string text = string.Join("@|", array);
 					frmItemList.l_items[upd.itemindexes[i]] = text;
 				}
-			});
 
-			// Persist prerequisite changes into itemsindex (per-locale, matched by platform prefix).
-			WritePrerequisites();
+				// Persist prerequisite changes into itemsindex (per-locale, matched by platform prefix).
+				// Runs on the background thread — itemsindex can have ~10k lines, so keep it off the UI thread.
+				WritePrerequisites();
+			});
 
 			frmItemList.p_items = 0;
 			frmItemList.u_items = null;
@@ -407,6 +505,10 @@ public class frmEditUpdate : Form
 
 	private void btnAddPrereq_Click(object sender, EventArgs e)
 	{
+		// Collect the distinct update codes in this provider (O(n) via a HashSet), excluding this update
+		// and codes already chosen. HashSet keeps the "Add..." dialog responsive on large providers (~10k lines).
+		var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		var already = new HashSet<string>(prereqCodes, StringComparer.OrdinalIgnoreCase);
 		List<string> available = new List<string>();
 		string[] idx = frmItemList.l_itemsindex;
 		if (idx != null)
@@ -415,8 +517,8 @@ public class frmEditUpdate : Form
 			{
 				if (string.IsNullOrEmpty(line)) continue;
 				string c = CodeFromItemId(ItemsIndexItemId(line));
-				if (string.IsNullOrEmpty(c) || string.Equals(c, upd.code, StringComparison.OrdinalIgnoreCase) || prereqCodes.Contains(c)) continue;
-				if (!available.Contains(c)) available.Add(c);
+				if (string.IsNullOrEmpty(c) || string.Equals(c, upd.code, StringComparison.OrdinalIgnoreCase) || already.Contains(c)) continue;
+				if (seen.Add(c)) available.Add(c);
 			}
 		}
 		available.Sort(StringComparer.OrdinalIgnoreCase);
@@ -475,56 +577,54 @@ public class frmEditUpdate : Form
 		return result;
 	}
 
-	// Find an itemsindex itemID (incl. provider prefix) for the given prerequisite code that shares the
-	// same platform/locale prefix as the dependent line (so prerequisite and dependent match OS + locale).
-	private string FindPrereqItemId(string prefix, string prereqCode)
+	// The itemID prefix up to and including ".x86.<locale>." — identifies the platform + locale, ignoring
+	// service pack / build, so a prerequisite for the "same OS + locale" matches even at a different SP.
+	private static string LocalePrefix(string itemId)
 	{
-		string[] idx = frmItemList.l_itemsindex;
-		if (idx == null) return null;
-		string token = "com_microsoft." + prereqCode + ".";
-		foreach (string line in idx)
+		int cmIdx = itemId.IndexOf("com_microsoft.", StringComparison.Ordinal);
+		string prefix = (cmIdx >= 0) ? itemId.Substring(0, cmIdx) : itemId;
+		int x86 = itemId.IndexOf(".x86.", StringComparison.OrdinalIgnoreCase);
+		if (x86 >= 0)
 		{
-			if (string.IsNullOrEmpty(line)) continue;
-			string itemId = ItemsIndexItemId(line);
-			if (itemId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && itemId.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
-			{
-				return itemId;
-			}
+			int locStart = x86 + ".x86.".Length;
+			int locEnd = itemId.IndexOf('.', locStart);
+			if (locEnd > locStart) prefix = itemId.Substring(0, locEnd + 1);
 		}
-		return null;
+		return prefix;
 	}
 
 	// Rewrite the "@|" dependency field of every itemsindex line belonging to this update, using the
-	// currently selected prerequisite codes (empty when none). Called on the UI thread during Finish.
+	// currently selected prerequisite codes (empty when none). O(n): builds a (localePrefix|code)->itemID
+	// lookup once so it stays fast even on providers with ~10k itemsindex lines. Runs on a background thread.
 	private void WritePrerequisites()
 	{
 		string[] idx = frmItemList.l_itemsindex;
 		if (idx == null) return;
 		string provPrefix = frmItemList.provider + ".";
+
+		// Build the lookup once: for each itemsindex line, key = "<localePrefix lower><code lower>".
+		var lookup = new Dictionary<string, string>();
+		foreach (string line in idx)
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+			string itemId = ItemsIndexItemId(line);
+			string code = CodeFromItemId(itemId);
+			if (string.IsNullOrEmpty(code)) continue;
+			string key = LocalePrefix(itemId).ToLowerInvariant() + "" + code.ToLowerInvariant();
+			if (!lookup.ContainsKey(key)) lookup[key] = itemId; // first match per platform+locale+code
+		}
+
 		for (int i = 0; i < idx.Length; i++)
 		{
 			string line = idx[i];
 			if (string.IsNullOrEmpty(line) || !LineBelongsToThisUpdate(line)) continue;
 			string itemId = ItemsIndexItemId(line);
-			int cmIdx = itemId.IndexOf("com_microsoft.", StringComparison.Ordinal);
-			if (cmIdx < 0) continue;
-			// Match a prerequisite that shares the same platform + locale (up to and including
-			// ".x86.<locale>."). The service pack / build may differ, matching the "same OS + locale"
-			// rule without requiring an identical service pack.
-			string prefix = itemId.Substring(0, cmIdx);
-			int x86 = itemId.IndexOf(".x86.", StringComparison.OrdinalIgnoreCase);
-			if (x86 >= 0)
-			{
-				int locStart = x86 + ".x86.".Length;
-				int locEnd = itemId.IndexOf('.', locStart);
-				if (locEnd > locStart) prefix = itemId.Substring(0, locEnd + 1);
-			}
+			string prefixLower = LocalePrefix(itemId).ToLowerInvariant();
 			List<string> deps = new List<string>();
 			foreach (string pc in prereqCodes)
 			{
-				string prereqItemId = FindPrereqItemId(prefix, pc);
-				if (prereqItemId == null) continue; // no matching locale/platform variant of this prerequisite
-				string depNoPrefix = prereqItemId.StartsWith(provPrefix, StringComparison.Ordinal)
+				if (!lookup.TryGetValue(prefixLower + "" + pc.ToLowerInvariant(), out string prereqItemId)) continue;
+				string depNoPrefix = prereqItemId.StartsWith(provPrefix, StringComparison.OrdinalIgnoreCase)
 					? prereqItemId.Substring(provPrefix.Length)
 					: prereqItemId;
 				if (!deps.Contains(depNoPrefix)) deps.Add(depNoPrefix);
@@ -532,6 +632,168 @@ public class frmEditUpdate : Form
 			string beforeAt = line.Split(new string[] { "@|" }, StringSplitOptions.None)[0];
 			idx[i] = beforeAt + "@|" + string.Join(",", deps);
 		}
+	}
+
+	// ================= Edit which OSes an IE update is displayed on =================
+
+	// GUID of an itemsindex line: "<itemId>,<GUID>@|..." — the part after the last comma before "@|".
+	private static string ItemsIndexGuid(string line)
+	{
+		string beforeAt = line.Split(new string[] { "@|" }, StringSplitOptions.None)[0];
+		int c = beforeAt.LastIndexOf(',');
+		return (c >= 0) ? beforeAt.Substring(c + 1) : "";
+	}
+
+	// The locale token of an itemID (the segment after ".x86.").
+	private static string LocaleOf(string itemId)
+	{
+		int x = itemId.IndexOf(".x86.", StringComparison.OrdinalIgnoreCase);
+		if (x < 0) return null;
+		int s = x + ".x86.".Length;
+		int e = itemId.IndexOf('.', s);
+		return (e > s) ? itemId.Substring(s, e - s) : itemId.Substring(s);
+	}
+
+	// Build the itemID(s) (minus provider prefix) for an IE update on a given OS + locale. XP/2003 produce
+	// a family-wildcard entry plus one per service pack, matching the formats the Catalog queries expect.
+	private static List<string> BuildIEItemIds(string product, string os, string loc, string code, string ver)
+	{
+		var r = new List<string>();
+		string tail = "com_microsoft." + code + "." + ver; // ver may be "" (update with no version)
+		switch (os)
+		{
+			case "Windows 98":
+				r.Add($"{product}.ver_platform_win32_windows.4.10.x86.{loc}......{tail}");
+				break;
+			case "Windows ME":
+				r.Add($"{product}.ver_platform_win32_windows.4.90.x86.{loc}...3000...{tail}");
+				break;
+			case "Windows 2000":
+				r.Add($"{product}.ver_platform_win32_nt.5.0.x86.{loc}...2195...{tail}");
+				break;
+			case "Windows XP":
+				r.Add($"{product}.ver_platform_win32_nt.5.1.x86.{loc}.ver_nt_workstation..2600...{tail}");
+				foreach (string sp in new[] { "0", "1", "2" })
+					r.Add($"{product}.ver_platform_win32_nt.5.1.x86.{loc}.ver_nt_workstation..2600.{sp}.0.{tail}");
+				break;
+			case "Windows Server 2003":
+				r.Add($"{product}.ver_platform_win32_nt.5.2.x86.{loc}.ver_nt_server..3790...{tail}");
+				foreach (string sp in new[] { "0", "1" })
+					r.Add($"{product}.ver_platform_win32_nt.5.2.x86.{loc}.ver_nt_server..3790.{sp}.0.{tail}");
+				break;
+		}
+		return r;
+	}
+
+	// The product2items key for a value itemID = the itemID with provider prefix but without the trailing
+	// ".com_microsoft.<code>.<ver>" — verified to match the real key formats for every OS.
+	private static string Product2ItemsKey(string provider, string valueMinusProvider)
+	{
+		int cm = valueMinusProvider.IndexOf(".com_microsoft.", StringComparison.OrdinalIgnoreCase);
+		string keyBody = (cm >= 0) ? valueMinusProvider.Substring(0, cm) : valueMinusProvider;
+		return provider + "." + keyBody;
+	}
+
+	private static void AddToProduct2Items(List<string> p2i, string provider, string valueMinusProvider)
+	{
+		string key = Product2ItemsKey(provider, valueMinusProvider);
+		for (int i = 0; i < p2i.Count; i++)
+		{
+			string line = p2i[i];
+			if (string.IsNullOrEmpty(line)) continue;
+			int firstComma = line.IndexOf(',');
+			string lineKey = (firstComma >= 0) ? line.Substring(0, firstComma) : line;
+			if (string.Equals(lineKey, key, StringComparison.OrdinalIgnoreCase))
+			{
+				if (line.IndexOf(valueMinusProvider, StringComparison.OrdinalIgnoreCase) < 0)
+					p2i[i] = line + "," + valueMinusProvider;
+				return;
+			}
+		}
+		p2i.Add(key + "," + valueMinusProvider);
+	}
+
+	// Add/remove itemsindex + product2items entries so this update is displayed on exactly the chosen OSes.
+	private void ApplyIEOSChanges(List<string> desiredOSes)
+	{
+		string provider = frmItemList.provider;
+		string provPrefix = provider + ".";
+		var idx = new List<string>(frmItemList.l_itemsindex ?? new string[0]);
+		var p2i = new List<string>(frmItemList.l_product2items ?? new string[0]);
+
+		// Parse the update's existing itemsindex lines: per-locale GUID (reused for new OS variants) + product/code/ver.
+		var localeGuid = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		string product = null, code = null, ver = null;
+		foreach (string line in idx)
+		{
+			if (string.IsNullOrEmpty(line) || !LineBelongsToThisUpdate(line)) continue;
+			string itemId = ItemsIndexItemId(line);
+			string loc = LocaleOf(itemId);
+			if (loc != null && !localeGuid.ContainsKey(loc)) localeGuid[loc] = ItemsIndexGuid(line);
+			if (product == null)
+			{
+				string noProv = itemId.StartsWith(provPrefix, StringComparison.OrdinalIgnoreCase) ? itemId.Substring(provPrefix.Length) : itemId;
+				int d = noProv.IndexOf('.');
+				product = (d > 0) ? noProv.Substring(0, d) : noProv;
+				int cm = itemId.IndexOf("com_microsoft.", StringComparison.Ordinal);
+				if (cm >= 0)
+				{
+					string t = itemId.Substring(cm + "com_microsoft.".Length); // "<code>.<ver>"
+					int dd = t.IndexOf('.');
+					code = (dd >= 0) ? t.Substring(0, dd) : t;
+					ver = (dd >= 0) ? t.Substring(dd + 1) : "";
+				}
+			}
+		}
+		if (product == null || code == null || localeGuid.Count == 0) return; // nothing to work from
+
+		var current = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (string os in AllIEOSes) if (IEOSIsCovered(os)) current.Add(os);
+		var desired = new HashSet<string>(desiredOSes ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+		var allowed = new HashSet<string>(AllowedIEOSes(), StringComparer.OrdinalIgnoreCase);
+
+		foreach (string os in AllIEOSes)
+		{
+			string token = IEOSPlatformToken(os);
+
+			// REMOVE: unchecked OS that is currently covered.
+			if (current.Contains(os) && !desired.Contains(os))
+			{
+				idx.RemoveAll(line => !string.IsNullOrEmpty(line) && LineBelongsToThisUpdate(line)
+					&& ItemsIndexItemId(line).IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0);
+				var newP2i = new List<string>(p2i.Count);
+				foreach (string line in p2i)
+				{
+					if (string.IsNullOrEmpty(line)) { newP2i.Add(line); continue; }
+					string[] parts = line.Split(',');
+					var kept = new List<string> { parts[0] };
+					for (int j = 1; j < parts.Length; j++)
+					{
+						bool isThisUpdateOnThisOS = string.Equals(CodeFromItemId(parts[j]), code, StringComparison.OrdinalIgnoreCase)
+							&& parts[j].IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0;
+						if (!isThisUpdateOnThisOS) kept.Add(parts[j]);
+					}
+					if (kept.Count > 1) newP2i.Add(string.Join(",", kept)); // drop lines left with only a key
+				}
+				p2i = newP2i;
+			}
+
+			// ADD: checked+allowed OS that is not yet covered.
+			if (desired.Contains(os) && allowed.Contains(os) && !current.Contains(os))
+			{
+				foreach (var kv in localeGuid)
+				{
+					foreach (string builtId in BuildIEItemIds(product, os, kv.Key, code, ver))
+					{
+						idx.Add(provPrefix + builtId + "," + kv.Value + "@|");
+						AddToProduct2Items(p2i, provider, builtId);
+					}
+				}
+			}
+		}
+
+		frmItemList.l_itemsindex = idx.ToArray();
+		frmItemList.l_product2items = p2i.ToArray();
 	}
 
 	protected override void Dispose(bool disposing)
@@ -769,7 +1031,7 @@ public class frmEditUpdate : Form
 		base.AutoScaleDimensions = new System.Drawing.SizeF(6f, 13f);
 		base.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
 		this.BackColor = System.Drawing.SystemColors.Control;
-		base.ClientSize = new System.Drawing.Size(440, 321);
+		base.ClientSize = new System.Drawing.Size(470, 480);
 		base.Controls.Add(this.advancedWizard1);
 		base.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedSingle;
 		base.MaximizeBox = false;

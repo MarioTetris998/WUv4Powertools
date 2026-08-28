@@ -110,12 +110,16 @@ public class frmItemList : Form
 				lstItemCol.Clear();
 			}
 			
+			// A HashSet for the membership test. This was a List.Contains scan, which is linear per
+			// item and so quadratic overall. win2k holds 3383 items lines, meaning millions of
+			// string comparisons every time the list was rebuilt.
 			List<string> u_items1 = new List<string>();
+			HashSet<string> u_seen = new HashSet<string>(StringComparer.Ordinal);
 			string[] array = l_items;
 			for (int i = 0; i < array.Length; i++)
 			{
 				string code = array[i].Split('@')[0].Split(',')[1];
-				if (!u_items1.Contains(code))
+				if (u_seen.Add(code))
 				{
 					u_items1.Add(code);
 				}
@@ -367,14 +371,28 @@ catch (Exception ex)
 		{
 			if (frmMain.mdiTabs.SelectedForm == this)
 			{
-				frmMain.lblItems.Text = $"{p_items} items";
 				if (bw.IsBusy)
 				{
-					frmMain.pbBusy.Style = ProgressBarStyle.Marquee;
+					// Show real progress once the total is known. A marquee gave no idea whether a provider
+					// with thousands of updates was halfway through or wedged.
+					int total = (u_items != null) ? u_items.Length : 0;
+					if (total > 0)
+					{
+						frmMain.pbBusy.Style = ProgressBarStyle.Continuous;
+						frmMain.pbBusy.Maximum = total;
+						frmMain.pbBusy.Value = Math.Min(p_items, total);
+						frmMain.lblItems.Text = $"{p_items} of {total} items";
+					}
+					else
+					{
+						frmMain.pbBusy.Style = ProgressBarStyle.Marquee;
+						frmMain.lblItems.Text = $"{p_items} items";
+					}
 				}
 				else
 				{
 					frmMain.pbBusy.Style = ProgressBarStyle.Blocks;
+					frmMain.lblItems.Text = $"{p_items} items";
 				}
 			}
 		}
@@ -620,6 +638,28 @@ catch (Exception ex)
 
 	// ================= Persisting display order (keep all dictionary files in sync) =================
 	// Main-site display order = itemID order within each product2items line. When the user drags to
+	private bool groupingHandlerAttached;
+
+	// Clears the list and reloads it. Every caller used to attach its own RunWorkerCompleted handler
+	// right before starting the worker, so refreshing or switching language N times left N handlers
+	// attached and ran the grouping pass N times per reload. The handler is attached once here.
+	public void ReloadItems()
+	{
+		if (!groupingHandlerAttached)
+		{
+			bw.RunWorkerCompleted += delegate
+			{
+				OrganizeIntoGroups();
+			};
+			groupingHandlerAttached = true;
+		}
+		p_items = 0;
+		u_items = null;
+		lstItemCol = new List<ListViewItem>();
+		lstItems.Items.Clear();
+		bw.RunWorkerAsync();
+	}
+
 	// Removes duplicate entries from every dictionary file. Repeated add and edit cycles used to
 	// compound duplicate lines until a provider stopped loading at all, because the catalog parses
 	// each file as a whole. Called on save. Returns the number of duplicate lines removed.
