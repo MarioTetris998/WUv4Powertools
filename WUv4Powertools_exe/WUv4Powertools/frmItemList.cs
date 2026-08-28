@@ -25,6 +25,41 @@ public class frmItemList : Form
 	// an update yields no row for the selected language.
 	public int p_scanned;
 
+	// Current search text. Empty shows everything. Applied when the list is rebuilt, so matches
+	// keep their categories and everything else is left out rather than merely tinted.
+	private string searchFilter = string.Empty;
+
+	// Rows actually on screen, which is the filtered count once a search is active.
+	public int VisibleItemCount
+	{
+		get { return lstItems.Items.Count; }
+	}
+
+	public string CurrentSearchFilter
+	{
+		get { return searchFilter; }
+	}
+
+	public void SetSearchFilter(string term)
+	{
+		searchFilter = term ?? string.Empty;
+		OrganizeIntoGroups();
+	}
+
+	// Matches on every column, ignoring case, so a code can be found whatever case it is typed in.
+	public static bool ItemMatches(ListViewItem item, string term)
+	{
+		if (string.IsNullOrEmpty(term)) return true;
+		foreach (ListViewItem.ListViewSubItem sub in item.SubItems)
+		{
+			if (sub.Text != null && sub.Text.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	public string provider;
 
 	public bool isDriverProvider = false;
@@ -380,6 +415,8 @@ catch (Exception ex)
 		{
 			if (frmMain.mdiTabs.SelectedForm == this)
 			{
+				frmMain.lblItems.Visible = true;
+				frmMain.pbBusy.Visible = true;
 				if (bw.IsBusy)
 				{
 					// Show real progress once the total is known. A marquee gave no idea whether a provider
@@ -390,7 +427,7 @@ catch (Exception ex)
 						frmMain.pbBusy.Style = ProgressBarStyle.Continuous;
 						frmMain.pbBusy.Maximum = total;
 						frmMain.pbBusy.Value = Math.Min(p_scanned, total);
-						frmMain.lblItems.Text = $"{p_items} of {total} items";
+						frmMain.lblItems.Text = $"{p_scanned} of {total} items";
 					}
 					else
 					{
@@ -404,7 +441,7 @@ catch (Exception ex)
 					// painted, leaving a part filled bar sitting there after the load has finished.
 					frmMain.pbBusy.Style = ProgressBarStyle.Blocks;
 					frmMain.pbBusy.Value = 0;
-					frmMain.lblItems.Text = $"{p_items} items";
+					frmMain.lblItems.Text = $"{VisibleItemCount} items";
 				}
 			}
 		}
@@ -556,8 +593,15 @@ catch (Exception ex)
 		};
 		
 		// Get all unique groups from items
+		// Only what matches is considered, so a category with no match does not appear at all.
+		List<ListViewItem> visible = new List<ListViewItem>();
+		foreach (ListViewItem candidate in lstItemCol)
+		{
+			if (ItemMatches(candidate, searchFilter)) visible.Add(candidate);
+		}
+
 		var groups = new Dictionary<int, ListViewGroup>();
-		foreach (ListViewItem item in lstItemCol)
+		foreach (ListViewItem item in visible)
 		{
 			Update upd = (Update)item.Tag;
 			if (!groups.ContainsKey(upd.group))
@@ -578,7 +622,7 @@ catch (Exception ex)
 		}
 
 		// Sort items by group priority and custom order (DESCENDING - newest first)
-		var sortedItems = lstItemCol.OrderBy(item => {
+		var sortedItems = visible.OrderBy(item => {
 											var upd = (Update)item.Tag;
 											return groupPriority.ContainsKey(upd.group) ? groupPriority[upd.group] : 999;
 										 })

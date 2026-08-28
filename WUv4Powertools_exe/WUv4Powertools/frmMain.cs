@@ -149,6 +149,14 @@ public class frmMain : Form
 	{
 		Font = SystemFonts.MessageBoxFont;
 		InitializeComponent();
+		mdiTabs.SelectedTabChanged += delegate
+		{
+			// The search box belongs to whichever provider is in front, so restore that tab's term
+			// and show or hide the status widgets to match.
+			frmItemList active = mdiTabs.SelectedForm as frmItemList;
+			txtSearch.Text = (active != null) ? active.CurrentSearchFilter : string.Empty;
+			UpdateStatusForTab();
+		};
 		mdiTabs.TabPages.Add(new frmHome(this));
 		mdiTabs.TabPages[0].CloseButtonVisible = false;
 		ToolStripManager.Renderer = new global::Office2007Renderer.Office2007Renderer();
@@ -842,92 +850,60 @@ public class frmMain : Form
 
 	private void txtSearch_TextChanged(object sender, EventArgs e)
 	{
-		frmItemList list = base.Tag as frmItemList;
+		frmItemList list = mdiTabs.SelectedForm as frmItemList;
 		if (list == null)
 		{
 			return;
 		}
-		string term = txtSearch.Text;
-		foreach (ListViewItem item in list.lstItems.Items)
-		{
-			item.BackColor = (term.Length > 0 && ItemMatches(item, term)) ? Color.LightYellow : Color.Transparent;
-		}
+		// Rebuilds the list keeping only what matches. Matches stay under their own categories and
+		// a category with nothing left in it disappears with them.
+		list.SetSearchFilter(txtSearch.Text);
+		UpdateStatusForTab();
 	}
 
-	// Matches on every column rather than the title alone, and ignores case. Update codes are mixed
-	// case and a provider can hold thousands of rows, so a case sensitive title only search missed
-	// most of what people were looking for.
-	private static bool ItemMatches(ListViewItem item, string term)
+	// The item count and progress bar belong to the open provider, so they follow the active tab
+	// and are hidden entirely on tabs that hold no updates, such as the welcome page.
+	public void UpdateStatusForTab()
 	{
-		foreach (ListViewItem.ListViewSubItem sub in item.SubItems)
+		frmItemList list = mdiTabs.SelectedForm as frmItemList;
+		if (list == null)
 		{
-			if (sub.Text != null && sub.Text.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0)
-			{
-				return true;
-			}
+			lblItems.Visible = false;
+			pbBusy.Visible = false;
+			return;
 		}
-		return false;
+		lblItems.Visible = true;
+		pbBusy.Visible = true;
+		lblItems.Text = list.VisibleItemCount + " items";
 	}
 
+	// Everything on screen already matches the search, so stepping is just moving the selection.
 	private void btnFindNext_Click(object sender, EventArgs e)
 	{
-		try
-		{
-			frmItemList frmItemList2 = (frmItemList)base.Tag;
-			for (int i = 0; i < frmItemList2.lstItems.Items.Count; i++)
-			{
-				ListViewItem lvi = frmItemList2.lstItems.Items[i];
-				if (frmItemList2.lstItems.SelectedItems.Count > 0)
-				{
-					if (frmItemList2.lstItems.SelectedItems[0].Index < i && lvi.BackColor == Color.LightYellow)
-					{
-						lvi.Selected = true;
-						lvi.EnsureVisible();
-						i = frmItemList2.lstItems.Items.Count;
-					}
-				}
-				else if (lvi.BackColor == Color.LightYellow)
-				{
-					lvi.Selected = true;
-					lvi.EnsureVisible();
-					i = frmItemList2.lstItems.Items.Count;
-				}
-			}
-		}
-		catch
-		{
-		}
+		StepThroughResults(1);
 	}
 
 	private void btnPreviousSearch_Click(object sender, EventArgs e)
 	{
-		try
-		{
-			frmItemList frmItemList2 = (frmItemList)base.Tag;
-			for (int i = frmItemList2.lstItems.Items.Count - 1; i >= 0; i--)
-			{
-				ListViewItem lvi = frmItemList2.lstItems.Items[i];
-				if (frmItemList2.lstItems.SelectedItems.Count > 0)
-				{
-					if (frmItemList2.lstItems.SelectedItems[0].Index > i && lvi.BackColor == Color.LightYellow)
-					{
-						lvi.Selected = true;
-						lvi.EnsureVisible();
-						i = 0;
-					}
-				}
-				else if (lvi.BackColor == Color.LightYellow)
-				{
-					lvi.Selected = true;
-					lvi.EnsureVisible();
-					i = 0;
-				}
-			}
-		}
-		catch
-		{
-		}
+		StepThroughResults(-1);
 	}
+
+	private void StepThroughResults(int direction)
+	{
+		frmItemList list = mdiTabs.SelectedForm as frmItemList;
+		if (list == null || list.lstItems.Items.Count == 0)
+		{
+			return;
+		}
+		int count = list.lstItems.Items.Count;
+		int current = (list.lstItems.SelectedItems.Count > 0) ? list.lstItems.SelectedItems[0].Index : -1;
+		int next = (current < 0) ? ((direction > 0) ? 0 : count - 1) : ((current + direction + count) % count);
+		ListViewItem target = list.lstItems.Items[next];
+		target.Selected = true;
+		target.EnsureVisible();
+		list.lstItems.Focus();
+	}
+
 
 	private void mdiTabs_SelectedTabChanged(object sender, EventArgs e)
 	{
