@@ -608,10 +608,13 @@ public class frmMain : Form
 		}
 
 		int duplicates = list.SanitizeProvider();
+		// Escaping the EULA link is mechanical, so it is simply done. A malformed installation
+		// block cannot be rewritten safely and is only ever reported.
+		int eulaFixed = list.RepairEulaEscaping();
 		int coverageGaps;
 		string issues = list.ValidateProvider(out coverageGaps);
 
-		if (issues == null && duplicates == 0 && coverageGaps == 0)
+		if (issues == null && duplicates == 0 && eulaFixed == 0 && coverageGaps == 0)
 		{
 			MessageBox.Show("This provider is consistent. Nothing needed repairing.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
 			return;
@@ -621,6 +624,10 @@ public class frmMain : Form
 		if (duplicates > 0)
 		{
 			report += duplicates + " duplicate lines were removed.\n";
+		}
+		if (eulaFixed > 0)
+		{
+			report += eulaFixed + " EULA links were escaped so they no longer break the catalog XML.\n";
 		}
 		if (issues != null)
 		{

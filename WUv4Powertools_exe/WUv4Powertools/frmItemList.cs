@@ -755,6 +755,116 @@ catch (Exception ex)
 		return lineDelta;
 	}
 
+	// items.txt field 5 is the <installation> block and itemstrings.txt field 4 is the EULA link.
+	// The catalog page concatenates these raw into one XML document which the browser parses in a
+	// single shot, and that parse is all or nothing: one malformed record blanks the ENTIRE result
+	// list for every operating system and language whose search touches it. This app writes both
+	// fields itself, so they are checked before every save rather than after the damage ships.
+	private const int InstallationField = 5;
+
+	private const int EulaField = 4;
+
+	private static readonly System.Text.RegularExpressions.Regex BareAmpersand =
+		new System.Text.RegularExpressions.Regex(@"&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);)");
+
+	private static readonly string[] FieldSeparator = new string[1] { "@|" };
+
+	// Returns one description per record that would break the catalog, with the line number and id
+	// so it can actually be found. Empty when there is nothing wrong.
+	public List<string> FindCatalogBreakingRecords()
+	{
+		List<string> problems = new List<string>();
+
+		if (l_items != null)
+		{
+			for (int i = 0; i < l_items.Length; i++)
+			{
+				string line = l_items[i];
+				if (string.IsNullOrEmpty(line)) continue;
+				string[] parts = line.Split(FieldSeparator, StringSplitOptions.None);
+				if (parts.Length <= InstallationField) continue;
+				if (!IsWellFormedXml(parts[InstallationField]))
+				{
+					problems.Add("items.txt line " + (i + 1) + " (" + GuidOf(line) + "): the installation block is not well formed XML.");
+				}
+			}
+		}
+
+		if (l_itemstrings != null)
+		{
+			for (int i = 0; i < l_itemstrings.Length; i++)
+			{
+				string line = l_itemstrings[i];
+				if (string.IsNullOrEmpty(line)) continue;
+				string[] parts = line.Split(FieldSeparator, StringSplitOptions.None);
+				if (parts.Length <= EulaField) continue;
+				if (NeedsEscaping(parts[EulaField]))
+				{
+					problems.Add("itemstrings.txt line " + (i + 1) + ": the EULA link contains characters that break the XML attribute.");
+				}
+			}
+		}
+		return problems;
+	}
+
+	// Escapes the characters that break the XML attribute the EULA link sits in. This is mechanical
+	// and safe. A malformed installation block is not, so that is only ever reported, never rewritten.
+	public int RepairEulaEscaping()
+	{
+		if (l_itemstrings == null) return 0;
+		int repaired = 0;
+		for (int i = 0; i < l_itemstrings.Length; i++)
+		{
+			string line = l_itemstrings[i];
+			if (string.IsNullOrEmpty(line)) continue;
+			string[] parts = line.Split(FieldSeparator, StringSplitOptions.None);
+			if (parts.Length <= EulaField) continue;
+			string eula = parts[EulaField];
+			if (!NeedsEscaping(eula)) continue;
+			// Ampersands first, so the entities introduced below are not escaped a second time.
+			parts[EulaField] = BareAmpersand.Replace(eula, "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+			l_itemstrings[i] = string.Join("@|", parts);
+			repaired++;
+		}
+		return repaired;
+	}
+
+	private static bool IsWellFormedXml(string fragment)
+	{
+		if (string.IsNullOrEmpty(fragment)) return true;
+		try
+		{
+			System.Xml.XmlReaderSettings settings = new System.Xml.XmlReaderSettings();
+			settings.DtdProcessing = System.Xml.DtdProcessing.Prohibit;
+			settings.XmlResolver = null;
+			using (System.IO.StringReader text = new System.IO.StringReader(fragment))
+			using (System.Xml.XmlReader reader = System.Xml.XmlReader.Create(text, settings))
+			{
+				while (reader.Read())
+				{
+				}
+			}
+			return true;
+		}
+		catch (System.Xml.XmlException)
+		{
+			return false;
+		}
+	}
+
+	private static bool NeedsEscaping(string value)
+	{
+		if (string.IsNullOrEmpty(value)) return false;
+		return value.IndexOf('<') >= 0 || value.IndexOf('>') >= 0 || BareAmpersand.IsMatch(value);
+	}
+
+	private static string GuidOf(string itemsLine)
+	{
+		string head = itemsLine.Split(FieldSeparator, StringSplitOptions.None)[0];
+		int comma = head.IndexOf(',');
+		return (comma > 0) ? head.Substring(0, comma) : head;
+	}
+
 	// Cross checks the five dictionary files against each other. Returns null when nothing is broken,
 	// otherwise a description of the damage. Code and id comparisons are case insensitive, because
 	// items.txt is mixed case while itemsindex and product2items hold the same codes lowercased.
@@ -821,11 +931,24 @@ catch (Exception ex)
 		}
 
 		coverageGaps = danglingRefs;
-		if (orphanIndexGuids == 0 && missingStringRows == 0)
+		List<string> catalogBreaking = FindCatalogBreakingRecords();
+		if (orphanIndexGuids == 0 && missingStringRows == 0 && catalogBreaking.Count == 0)
 		{
 			return null;
 		}
 		System.Text.StringBuilder sb = new System.Text.StringBuilder();
+		if (catalogBreaking.Count > 0)
+		{
+			sb.AppendLine(catalogBreaking.Count + " records would blank the whole catalog result list:");
+			foreach (string problem in catalogBreaking.Take(5))
+			{
+				sb.AppendLine("    " + problem);
+			}
+			if (catalogBreaking.Count > 5)
+			{
+				sb.AppendLine("    and " + (catalogBreaking.Count - 5) + " more.");
+			}
+		}
 		if (orphanIndexGuids > 0) sb.AppendLine(orphanIndexGuids + " itemsindex entries point at an update with no items.txt row, so the update resolves to nothing.");
 		if (missingStringRows > 0) sb.AppendLine(missingStringRows + " itemstringsindex entries point at an itemstrings row that does not exist, so the title and description are missing.");
 		return sb.ToString();
