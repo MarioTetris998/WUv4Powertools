@@ -290,10 +290,6 @@ public class frmMain : Form
 		new frmAddUpdate((frmItemList)base.Tag, this).ShowDialog();
 	}
 
-	private void lblEula_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
-	{
-	}
-
 	private void tmrAgent_Tick(object sender, EventArgs e)
 	{
 		if (base.Tag == null)

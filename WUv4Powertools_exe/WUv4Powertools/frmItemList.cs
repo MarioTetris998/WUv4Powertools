@@ -662,6 +662,27 @@ catch (Exception ex)
 		}
 	}
 
+	// The link had no handler attached at all, so clicking it did nothing. The URL for the selected
+	// update is put in the label's Tag when the selection changes, so that is what gets opened.
+	private void lblEula_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
+	{
+		string url = lblEula.Tag as string;
+		if (string.IsNullOrEmpty(url))
+		{
+			MessageBox.Show("This update has no EULA link.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			return;
+		}
+		try
+		{
+			lblEula.LinkVisited = true;
+			System.Diagnostics.Process.Start(url);
+		}
+		catch (Exception ex)
+		{
+			MessageBox.Show("The EULA could not be opened:\n\n" + url + "\n\n" + ex.Message, "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Hand);
+		}
+	}
+
 	public void OrganizeIntoGroups()
 	{
 		lstItems.BeginUpdate();
@@ -1594,6 +1615,7 @@ catch (Exception ex)
 		this.lblTimeStamp.Size = new System.Drawing.Size(192, 18);
 		this.lblTimeStamp.TabIndex = 3;
 		this.lblEula.ActiveLinkColor = System.Drawing.SystemColors.HotTrack;
+		this.lblEula.LinkClicked += new System.Windows.Forms.LinkLabelLinkClickedEventHandler(lblEula_LinkClicked);
 		this.lblEula.Dock = System.Windows.Forms.DockStyle.Bottom;
 		this.lblEula.LinkColor = System.Drawing.SystemColors.Highlight;
 		this.lblEula.Location = new System.Drawing.Point(4, 428);

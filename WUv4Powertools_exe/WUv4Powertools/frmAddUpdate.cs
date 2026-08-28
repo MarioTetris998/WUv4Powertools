@@ -526,10 +526,8 @@ public class frmAddUpdate : Form
 	
 	private void InitializeIEOSControls()
 	{
-		// Increase the form size to accommodate IE OS checkboxes
-		this.Size = new System.Drawing.Size(440, 450);
-		this.advancedWizard1.Size = new System.Drawing.Size(440, 450);
-		this.advancedWizardPage1.Size = new System.Drawing.Size(440, 410);
+		// No resize here. The form is built large enough for every flow, and resizing only when the
+		// IE path ran was what left the ordinary add flow clipped at the smaller height.
 		
 		// Hide the OS and SP controls since they don't apply to IE updates
 		if (lblServicePack != null) lblServicePack.Visible = false;
@@ -1838,7 +1836,7 @@ public class frmAddUpdate : Form
 		this.advancedWizard1.NextButtonEnabled = true;
 		this.advancedWizard1.NextButtonText = "Next >";
 		this.advancedWizard1.ProcessKeys = false;
-		this.advancedWizard1.Size = new System.Drawing.Size(440, 321);
+		this.advancedWizard1.Size = new System.Drawing.Size(490, 490);
 		this.advancedWizard1.TabIndex = 0;
 		this.advancedWizard1.TouchScreen = false;
 		this.advancedWizard1.WizardPages.Add(this.advancedWizardPage1);
@@ -2343,7 +2341,11 @@ public class frmAddUpdate : Form
 		base.AutoScaleDimensions = new System.Drawing.SizeF(6f, 13f);
 		base.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
 		this.BackColor = System.Drawing.SystemColors.Control;
-		base.ClientSize = new System.Drawing.Size(440, 321);
+		// The pages are all docked to fill, so per page sizes are ignored and only the form size
+		// decides how much is visible. The deepest content is the IE 5.0x flow, whose help text ends
+		// at 380px, and the widest is its row of five OS checkboxes ending at 475px. Add the 40px
+		// button strip and this is what has to fit.
+		base.ClientSize = new System.Drawing.Size(490, 490);
 		base.Controls.Add(this.advancedWizard1);
 		base.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedSingle;
 		base.MaximizeBox = false;

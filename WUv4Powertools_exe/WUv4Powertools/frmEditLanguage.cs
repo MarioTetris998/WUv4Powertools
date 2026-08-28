@@ -51,6 +51,8 @@ public class frmEditLanguage : Form
 
 	private TextBox txtFileName;
 
+	private CheckBox chkAllLanguages;
+
 	public frmEditLanguage(frmItemList frmItemList, frmMain frmMain, Update upd)
 	{
 		this.upd = upd;
@@ -95,44 +97,64 @@ public class frmEditLanguage : Form
 
 	private void btnAdd_Click(object sender, EventArgs e)
 	{
-		// Capture the dictionaries before changing them, so this can be taken back with Undo.
-		frmItemList.PushUndoState();
-		if (cmbLang.Text != null && txtDLink.Text != null && txtFileName.Text != null)
-		{
-			foreach (UpdEdit upe in uLangs)
-			{
-				if (cmbLang.Text == upe.updLang)
-				{
-					HttpWebResponse obj = (HttpWebResponse)((HttpWebRequest)WebRequest.Create(new Uri(txtDLink.Text))).GetResponse();
-					obj.Close();
-					long iSize = obj.ContentLength;
-					string[] line_split = upe.updItem.Split(new string[1] { "@|" }, StringSplitOptions.None);
-					XmlDocument installation = new XmlDocument();
-					installation.Load(new MemoryStream(Encoding.UTF8.GetBytes(line_split[5])));
-					installation.GetElementsByTagName("codeBase")[0].Attributes["href"].Value = txtDLink.Text;
-					installation.GetElementsByTagName("command")[0].InnerXml = installation.GetElementsByTagName("command")[0].InnerXml.Replace(installation.GetElementsByTagName("codeBase")[0].Attributes["name"].Value, txtFileName.Text);
-					installation.GetElementsByTagName("codeBase")[0].Attributes["name"].Value = txtFileName.Text;
-					installation.GetElementsByTagName("size")[0].InnerXml = iSize.ToString();
-					installation.GetElementsByTagName("size")[1].InnerXml = iSize.ToString();
-					line_split[5] = installation.OuterXml;
-					line_split[8] = iSize.ToString();
-					string final_line = string.Join("@|", line_split);
-					frmItemList.l_items[upe.updIndex] = final_line;
-				}
-			}
-			frmItemList.p_items = 0;
-			frmItemList.u_items = null;
-			frmItemList.lstItemCol = new List<ListViewItem>();
-			frmItemList.lstItems.Items.Clear();
-			frmItemList.bw.RunWorkerAsync();
-			MessageBox.Show("Language edited Sucessfully", frmMain.Text, MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
-			Dispose();
-		}
-		else
+		if (cmbLang.Text == null || txtDLink.Text == null || txtFileName.Text == null)
 		{
 			MessageBox.Show("You need to complete information", "Error", MessageBoxButtons.OK, MessageBoxIcon.Hand);
+			return;
 		}
+
+		bool applyToAll = chkAllLanguages != null && chkAllLanguages.Checked;
+		if (applyToAll && MessageBox.Show("Point every language of this update at the same file?\n\nEach language will use this one URL and file name.", "Windows Update v4.0 PowerTools", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+		{
+			return;
+		}
+
+		// Capture the dictionaries before changing them, so this can be taken back with Undo.
+		frmItemList.PushUndoState();
+
+		long iSize;
+		try
+		{
+			// One request regardless of how many languages are being pointed at it, since they all
+			// end up on the same file.
+			HttpWebResponse probe = (HttpWebResponse)((HttpWebRequest)WebRequest.Create(new Uri(txtDLink.Text))).GetResponse();
+			iSize = probe.ContentLength;
+			probe.Close();
+		}
+		catch (Exception ex)
+		{
+			MessageBox.Show("The download link could not be reached:\n\n" + ex.Message, "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Hand);
+			return;
+		}
+
+		int changed = 0;
+		foreach (UpdEdit upe in uLangs)
+		{
+			if (!applyToAll && cmbLang.Text != upe.updLang)
+			{
+				continue;
+			}
+			string[] line_split = upe.updItem.Split(new string[1] { "@|" }, StringSplitOptions.None);
+			XmlDocument installation = new XmlDocument();
+			installation.Load(new MemoryStream(Encoding.UTF8.GetBytes(line_split[5])));
+			installation.GetElementsByTagName("codeBase")[0].Attributes["href"].Value = txtDLink.Text;
+			installation.GetElementsByTagName("command")[0].InnerXml = installation.GetElementsByTagName("command")[0].InnerXml.Replace(installation.GetElementsByTagName("codeBase")[0].Attributes["name"].Value, txtFileName.Text);
+			installation.GetElementsByTagName("codeBase")[0].Attributes["name"].Value = txtFileName.Text;
+			installation.GetElementsByTagName("size")[0].InnerXml = iSize.ToString();
+			installation.GetElementsByTagName("size")[1].InnerXml = iSize.ToString();
+			line_split[5] = installation.OuterXml;
+			line_split[8] = iSize.ToString();
+			frmItemList.l_items[upe.updIndex] = string.Join("@|", line_split);
+			changed++;
+		}
+
+		frmItemList.ReloadItems();
+		MessageBox.Show(applyToAll
+			? (changed + " languages now point at this file.")
+			: "Language edited Sucessfully", frmMain.Text, MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
+		Dispose();
 	}
+
 
 	private void cmbLang_SelectedIndexChanged(object sender, EventArgs e)
 	{
@@ -194,7 +216,7 @@ public class frmEditLanguage : Form
 		this.lblDLink.TabIndex = 3;
 		this.lblDLink.Text = "D. Link:";
 		this.btnAdd.DialogResult = System.Windows.Forms.DialogResult.OK;
-		this.btnAdd.Location = new System.Drawing.Point(116, 95);
+		this.btnAdd.Location = new System.Drawing.Point(116, 122);
 		this.btnAdd.Name = "btnAdd";
 		this.btnAdd.Size = new System.Drawing.Size(75, 23);
 		this.btnAdd.TabIndex = 4;
@@ -202,7 +224,7 @@ public class frmEditLanguage : Form
 		this.btnAdd.UseVisualStyleBackColor = true;
 		this.btnAdd.Click += new System.EventHandler(btnAdd_Click);
 		this.btnCancel.DialogResult = System.Windows.Forms.DialogResult.Cancel;
-		this.btnCancel.Location = new System.Drawing.Point(197, 95);
+		this.btnCancel.Location = new System.Drawing.Point(197, 122);
 		this.btnCancel.Name = "btnCancel";
 		this.btnCancel.Size = new System.Drawing.Size(75, 23);
 		this.btnCancel.TabIndex = 5;
@@ -220,7 +242,16 @@ public class frmEditLanguage : Form
 		this.txtFileName.TabIndex = 6;
 		base.AutoScaleDimensions = new System.Drawing.SizeF(6f, 13f);
 		base.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-		base.ClientSize = new System.Drawing.Size(284, 128);
+		this.chkAllLanguages = new System.Windows.Forms.CheckBox();
+		this.chkAllLanguages.AutoSize = true;
+		this.chkAllLanguages.Location = new System.Drawing.Point(16, 96);
+		this.chkAllLanguages.Name = "chkAllLanguages";
+		this.chkAllLanguages.Size = new System.Drawing.Size(210, 17);
+		this.chkAllLanguages.TabIndex = 8;
+		this.chkAllLanguages.Text = "Use this one URL for all languages";
+		this.chkAllLanguages.UseVisualStyleBackColor = true;
+		base.ClientSize = new System.Drawing.Size(284, 155);
+		base.Controls.Add(this.chkAllLanguages);
 		base.Controls.Add(this.label1);
 		base.Controls.Add(this.txtFileName);
 		base.Controls.Add(this.btnCancel);
