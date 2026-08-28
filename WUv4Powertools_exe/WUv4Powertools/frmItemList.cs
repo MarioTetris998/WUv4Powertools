@@ -20,6 +20,11 @@ public class frmItemList : Form
 
 	public int p_items;
 
+	// Loop iterations finished, as opposed to p_items which only counts rows actually added.
+	// Progress has to be measured against work done or the bar stops short of the end whenever
+	// an update yields no row for the selected language.
+	public int p_scanned;
+
 	public string provider;
 
 	public bool isDriverProvider = false;
@@ -350,6 +355,10 @@ public class frmItemList : Form
 			// Log the error but continue processing other items
 			System.Diagnostics.Debug.WriteLine($"Error processing item {_line}: {innerEx.Message}");
 		}
+		finally
+		{
+			System.Threading.Interlocked.Increment(ref p_scanned);
+		}
 	});
 }
 catch (Exception ex)
@@ -380,7 +389,7 @@ catch (Exception ex)
 					{
 						frmMain.pbBusy.Style = ProgressBarStyle.Continuous;
 						frmMain.pbBusy.Maximum = total;
-						frmMain.pbBusy.Value = Math.Min(p_items, total);
+						frmMain.pbBusy.Value = Math.Min(p_scanned, total);
 						frmMain.lblItems.Text = $"{p_items} of {total} items";
 					}
 					else
@@ -391,7 +400,10 @@ catch (Exception ex)
 				}
 				else
 				{
+					// Clear the bar as well as switching style. The value set while loading otherwise stays
+					// painted, leaving a part filled bar sitting there after the load has finished.
 					frmMain.pbBusy.Style = ProgressBarStyle.Blocks;
+					frmMain.pbBusy.Value = 0;
 					frmMain.lblItems.Text = $"{p_items} items";
 				}
 			}
@@ -654,6 +666,7 @@ catch (Exception ex)
 			groupingHandlerAttached = true;
 		}
 		p_items = 0;
+		p_scanned = 0;
 		u_items = null;
 		lstItemCol = new List<ListViewItem>();
 		lstItems.Items.Clear();

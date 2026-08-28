@@ -1155,8 +1155,11 @@ public class frmMain : Form
 		this.tsContainer.TabIndex = 15;
 		this.tsContainer.Text = "toolStripContainer1";
 		this.tsContainer.TopToolStripPanel.Controls.Add(this.menuStrip1);
-		this.tsContainer.TopToolStripPanel.Controls.Add(this.tbSearch);
+		// A ToolStripPanel lays its strips out in the order they are added, and the designer
+		// Location values are only hints it overrides. Adding the search strip first put it in
+		// the leftmost slot and pushed every button to the right of it.
 		this.tsContainer.TopToolStripPanel.Controls.Add(this.tbStandard);
+		this.tsContainer.TopToolStripPanel.Controls.Add(this.tbSearch);
 		this.mdiTabs.AutoSize = true;
 		this.mdiTabs.BackColor = System.Drawing.SystemColors.Control;
 		this.mdiTabs.Dock = System.Windows.Forms.DockStyle.Fill;
@@ -1311,7 +1314,7 @@ public class frmMain : Form
 		this.aboutToolStripMenuItem.Click += new System.EventHandler(helpToolStripButton_Click);
 		this.tbSearch.Dock = System.Windows.Forms.DockStyle.None;
 		this.tbSearch.Items.AddRange(new System.Windows.Forms.ToolStripItem[3] { this.btnFindNext, this.btnPreviousSearch, this.txtSearch });
-		this.tbSearch.Location = new System.Drawing.Point(381, 0);
+		this.tbSearch.Location = new System.Drawing.Point(3, 0);
 		this.tbSearch.Name = "tbSearch";
 		this.tbSearch.Size = new System.Drawing.Size(210, 25);
 		this.tbSearch.TabIndex = 16;
