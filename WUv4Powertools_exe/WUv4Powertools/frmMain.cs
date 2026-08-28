@@ -45,8 +45,6 @@ public class frmMain : Form
 
 	private ToolStripSeparator toolStripSeparator6;
 
-	private ToolStripButton cutToolStripButton;
-
 	private ToolStripButton copyToolStripButton;
 
 	private ToolStripButton pasteToolStripButton;
@@ -153,6 +151,9 @@ public class frmMain : Form
 	{
 		Font = SystemFonts.MessageBoxFont;
 		InitializeComponent();
+		// The form sees the key first, so Ctrl+C and Ctrl+V work wherever focus happens to be.
+		KeyPreview = true;
+		KeyDown += frmMain_KeyDown;
 		mdiTabs.SelectedTabChanged += delegate
 		{
 			// The search box belongs to whichever provider is in front, so restore that tab's term
@@ -606,10 +607,163 @@ public class frmMain : Form
 		}).Start();
 	}
 
+	// Copy and paste move updates between inventories. The identifiers of a copied update name the
+	// operating system it targets, so pasting rewrites that portion for the destination. Pasting back
+	// into the inventory the updates came from is refused, since that would only duplicate them.
+	public void CopySelectedUpdates()
+	{
+		frmItemList list = mdiTabs.SelectedForm as frmItemList;
+		if (list == null || list.lstItems.SelectedItems.Count == 0)
+		{
+			return;
+		}
+		List<string> codes = new List<string>();
+		foreach (ListViewItem selected in list.lstItems.SelectedItems)
+		{
+			Update upd = selected.Tag as Update;
+			if (upd != null && !string.IsNullOrEmpty(upd.code) && !codes.Contains(upd.code))
+			{
+				codes.Add(upd.code);
+			}
+		}
+		if (codes.Count == 0)
+		{
+			return;
+		}
+		UpdateClipboard.Set(list.provider, codes, list.l_items, list.l_itemsindex,
+			list.l_itemstrings, list.l_itemstringsindex);
+		RefreshEditButtons();
+	}
+
+	public void PasteUpdates()
+	{
+		frmItemList dest = mdiTabs.SelectedForm as frmItemList;
+		if (dest == null)
+		{
+			return;
+		}
+		if (!UpdateClipboard.HasContent)
+		{
+			MessageBox.Show("Nothing has been copied yet. Select updates in another inventory and press Ctrl+C.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			return;
+		}
+		if (string.Equals(UpdateClipboard.SourceProvider, dest.provider, StringComparison.OrdinalIgnoreCase))
+		{
+			MessageBox.Show("These updates came from this inventory. Paste them into a different one.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			return;
+		}
+		if (!UpdateCopier.IsKnown(UpdateClipboard.SourceProvider) || !UpdateCopier.IsKnown(dest.provider))
+		{
+			MessageBox.Show("Copying is not supported between these inventories, because the shape of their identifiers is not known.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Hand);
+			return;
+		}
+
+		UpdateCopier.ProviderTarget target = UpdateCopier.TargetFor(dest.provider);
+		string question = "Paste " + UpdateClipboard.Codes.Count + " update(s) from "
+			+ UpdateClipboard.SourceProvider + " into " + dest.provider + "?\n\n";
+		if (target.ServicePacks.Length > 0)
+		{
+			question += "Entries are written for every service pack this system has, SP0 to SP"
+				+ target.ServicePacks[target.ServicePacks.Length - 1] + ".\n";
+		}
+		if (target.Edition.Length > 0)
+		{
+			question += "This system is edition specific, so entries are written for " + target.Edition + ".\n";
+		}
+		if (UpdateCopier.IsCrossInternetExplorerVersion(UpdateClipboard.SourceProvider, dest.provider))
+		{
+			question += "\nWARNING: these are different Internet Explorer versions. The detection block";
+			question += " tests the installed Internet Explorer version, so a copy across versions will not match";
+			question += " the browser it lands on. It will either never be offered, or be offered against a";
+			question += " version it was never built for. Check the detection block afterwards.\n";
+		}
+		if (MessageBox.Show(question, "Windows Update v4.0 PowerTools", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+		{
+			return;
+		}
+
+		dest.PushUndoState();
+		ProviderData data = new ProviderData();
+		data.Provider = dest.provider;
+		data.Items.AddRange(dest.l_items ?? new string[0]);
+		data.ItemsIndex.AddRange(dest.l_itemsindex ?? new string[0]);
+		data.ItemStrings.AddRange(dest.l_itemstrings ?? new string[0]);
+		data.ItemStringsIndex.AddRange(dest.l_itemstringsindex ?? new string[0]);
+		data.Product2Items.AddRange(dest.l_product2items ?? new string[0]);
+
+		CopyOutcome outcome = UpdateCopyEngine.Copy(UpdateClipboard.SourceProvider,
+			UpdateClipboard.Items, UpdateClipboard.ItemsIndex, UpdateClipboard.ItemStrings,
+			UpdateClipboard.ItemStringsIndex, UpdateClipboard.Codes, data, target, null);
+
+		if (outcome.IndexEntriesAdded == 0)
+		{
+			MessageBox.Show("Nothing was pasted. The copied updates produced no entries for " + dest.provider + ".", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			return;
+		}
+
+		dest.l_items = data.Items.ToArray();
+		dest.l_itemsindex = data.ItemsIndex.ToArray();
+		dest.l_itemstrings = data.ItemStrings.ToArray();
+		dest.l_itemstringsindex = data.ItemStringsIndex.ToArray();
+		dest.l_product2items = data.Product2Items.ToArray();
+		dest.ReloadItems();
+
+		System.Text.StringBuilder sb = new System.Text.StringBuilder();
+		sb.AppendLine(outcome.UpdatesCopied + " update(s) pasted into " + dest.provider + ".");
+		sb.AppendLine(outcome.IndexEntriesAdded + " entries written across " + outcome.LocalesCovered + " language(s).");
+		if (outcome.Skipped.Count > 0)
+		{
+			sb.AppendLine();
+			sb.AppendLine(outcome.Skipped.Count + " produced nothing and were skipped.");
+		}
+		sb.AppendLine();
+		sb.AppendLine("Nothing is on disk yet. Save this provider to keep it, or use Undo to take it back.");
+		MessageBox.Show(sb.ToString(), "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
+	}
+
+	private void copyToolStripButton_Click(object sender, EventArgs e)
+	{
+		CopySelectedUpdates();
+	}
+
+	private void pasteToolStripButton_Click(object sender, EventArgs e)
+	{
+		PasteUpdates();
+	}
+
+	private void frmMain_KeyDown(object sender, KeyEventArgs e)
+	{
+		if (!e.Control)
+		{
+			return;
+		}
+		if (e.KeyCode == Keys.C)
+		{
+			CopySelectedUpdates();
+			e.Handled = true;
+		}
+		else if (e.KeyCode == Keys.V)
+		{
+			PasteUpdates();
+			e.Handled = true;
+		}
+	}
+
+	// Copy needs a selection. Paste needs something copied, from a different inventory.
+	public void RefreshEditButtons()
+	{
+		frmItemList list = mdiTabs.SelectedForm as frmItemList;
+		bool hasSelection = list != null && list.lstItems.SelectedItems.Count > 0;
+		copyToolStripButton.Enabled = hasSelection;
+		bool canPaste = list != null && UpdateClipboard.HasContent
+			&& !string.Equals(UpdateClipboard.SourceProvider, list.provider, StringComparison.OrdinalIgnoreCase);
+		pasteToolStripButton.Enabled = canPaste;
+	}
+
 	// Reports what does not line up across the five dictionary files and offers to drop the
 	// product2items references that resolve to nothing. Repairing only edits the in memory copy,
 	// so nothing reaches disk until the provider is saved.
-	private void repairProviderToolStripMenuItem_Click(object sender, EventArgs e)
+	public void repairProviderToolStripMenuItem_Click(object sender, EventArgs e)
 	{
 		frmItemList list = mdiTabs.SelectedForm as frmItemList;
 		if (list == null)
@@ -685,7 +839,7 @@ public class frmMain : Form
 
 	// Puts back the .bak files written by the last save. Saving keeps the previous contents of every
 	// file alongside it, so this is a single step undo for a save that turned out to be wrong.
-	private void restoreBackupToolStripMenuItem_Click(object sender, EventArgs e)
+	public void restoreBackupToolStripMenuItem_Click(object sender, EventArgs e)
 	{
 		frmItemList list = mdiTabs.SelectedForm as frmItemList;
 		if (list == null)
@@ -915,6 +1069,7 @@ public class frmMain : Form
 			return;
 		}
 		RefreshUndoRedoButtons();
+		RefreshEditButtons();
 		lblItems.Visible = true;
 		pbBusy.Visible = true;
 		lblItems.Text = list.VisibleItemCount + " items";
@@ -1136,7 +1291,6 @@ public class frmMain : Form
 		this.saveToolStripButton = new System.Windows.Forms.ToolStripButton();
 		this.btnRefresh = new System.Windows.Forms.ToolStripButton();
 		this.toolStripSeparator6 = new System.Windows.Forms.ToolStripSeparator();
-		this.cutToolStripButton = new System.Windows.Forms.ToolStripButton();
 		this.copyToolStripButton = new System.Windows.Forms.ToolStripButton();
 		this.pasteToolStripButton = new System.Windows.Forms.ToolStripButton();
 		this.toolStripSeparator2 = new System.Windows.Forms.ToolStripSeparator();
@@ -1380,9 +1534,9 @@ public class frmMain : Form
 		this.btnRedo.Enabled = false;
 		this.btnRedo.Click += new System.EventHandler(redoToolStripMenuItem_Click);
 		this.tbStandard.Items.AddRange(new System.Windows.Forms.ToolStripItem[2] { this.btnUndo, this.btnRedo });
-		this.tbStandard.Items.AddRange(new System.Windows.Forms.ToolStripItem[18]
+		this.tbStandard.Items.AddRange(new System.Windows.Forms.ToolStripItem[17]
 		{
-			this.openToolStripButton, this.saveToolStripButton, this.btnRefresh, this.toolStripSeparator6, this.cutToolStripButton, this.copyToolStripButton, this.pasteToolStripButton, this.toolStripSeparator2, this.btnNewUpdate, this.btnEditUpdate,
+			this.openToolStripButton, this.saveToolStripButton, this.btnRefresh, this.toolStripSeparator6, this.copyToolStripButton, this.pasteToolStripButton, this.toolStripSeparator2, this.btnNewUpdate, this.btnEditUpdate,
 			this.btnEditEULA, this.btnDeleteUpdate, this.btnAddUpdateLang, this.btnEditUpdateLang, this.btnDeleteUpdateLang, this.btnStringsEditor, this.btnStringFix, this.btnChangeUpdateCode
 		});
 		this.tbStandard.Location = new System.Drawing.Point(3, 0);
@@ -1413,22 +1567,20 @@ public class frmMain : Form
 		this.btnRefresh.Click += new System.EventHandler(btnRefresh_Click);
 		this.toolStripSeparator6.Name = "toolStripSeparator6";
 		this.toolStripSeparator6.Size = new System.Drawing.Size(6, 25);
-		this.cutToolStripButton.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Image;
-		this.cutToolStripButton.Image = (System.Drawing.Image)resources.GetObject("cutToolStripButton.Image");
-		this.cutToolStripButton.ImageTransparentColor = System.Drawing.Color.Magenta;
-		this.cutToolStripButton.Name = "cutToolStripButton";
-		this.cutToolStripButton.Size = new System.Drawing.Size(23, 22);
-		this.cutToolStripButton.Text = "C&ut";
 		this.copyToolStripButton.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Image;
 		this.copyToolStripButton.Image = (System.Drawing.Image)resources.GetObject("copyToolStripButton.Image");
 		this.copyToolStripButton.ImageTransparentColor = System.Drawing.Color.Magenta;
 		this.copyToolStripButton.Name = "copyToolStripButton";
+		this.copyToolStripButton.Enabled = false;
+		this.copyToolStripButton.Click += new System.EventHandler(copyToolStripButton_Click);
 		this.copyToolStripButton.Size = new System.Drawing.Size(23, 22);
 		this.copyToolStripButton.Text = "&Copy";
 		this.pasteToolStripButton.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Image;
 		this.pasteToolStripButton.Image = (System.Drawing.Image)resources.GetObject("pasteToolStripButton.Image");
 		this.pasteToolStripButton.ImageTransparentColor = System.Drawing.Color.Magenta;
 		this.pasteToolStripButton.Name = "pasteToolStripButton";
+		this.pasteToolStripButton.Enabled = false;
+		this.pasteToolStripButton.Click += new System.EventHandler(pasteToolStripButton_Click);
 		this.pasteToolStripButton.Size = new System.Drawing.Size(23, 22);
 		this.pasteToolStripButton.Text = "&Paste";
 		this.toolStripSeparator2.Name = "toolStripSeparator2";

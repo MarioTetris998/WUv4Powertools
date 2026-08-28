@@ -494,6 +494,57 @@ catch (Exception ex)
 	private void frmItemList_Load(object sender, EventArgs e)
 	{
 		frmMain = (frmMain)base.Tag;
+		BuildContextMenu();
+	}
+
+	// The update list sits on this child form inside the tab control, so the main form never sees
+	// these keystrokes and its KeyPreview does nothing for them. ProcessCmdKey runs before normal
+	// key handling on this form, which catches them wherever focus is inside the provider tab.
+	protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+	{
+		if (frmMain != null)
+		{
+			if (keyData == (Keys.Control | Keys.C))
+			{
+				frmMain.CopySelectedUpdates();
+				return true;
+			}
+			if (keyData == (Keys.Control | Keys.V))
+			{
+				frmMain.PasteUpdates();
+				return true;
+			}
+		}
+		return base.ProcessCmdKey(ref msg, keyData);
+	}
+
+	// The application hides its menu bar, so the commands that have no toolbar button of their
+	// own are reachable by right clicking the update list.
+	private void BuildContextMenu()
+	{
+		ContextMenuStrip menu = new ContextMenuStrip();
+		ToolStripMenuItem copyItem = new ToolStripMenuItem("Copy");
+		copyItem.ShortcutKeyDisplayString = "Ctrl+C";
+		copyItem.Click += delegate { frmMain.CopySelectedUpdates(); };
+		ToolStripMenuItem pasteItem = new ToolStripMenuItem("Paste");
+		pasteItem.ShortcutKeyDisplayString = "Ctrl+V";
+		pasteItem.Click += delegate { frmMain.PasteUpdates(); };
+		ToolStripMenuItem repairItem = new ToolStripMenuItem("Validate and Repair Provider");
+		repairItem.Click += delegate { frmMain.repairProviderToolStripMenuItem_Click(null, EventArgs.Empty); };
+		ToolStripMenuItem restoreItem = new ToolStripMenuItem("Undo Last Save");
+		restoreItem.Click += delegate { frmMain.restoreBackupToolStripMenuItem_Click(null, EventArgs.Empty); };
+		menu.Items.Add(copyItem);
+		menu.Items.Add(pasteItem);
+		menu.Items.Add(new ToolStripSeparator());
+		menu.Items.Add(repairItem);
+		menu.Items.Add(restoreItem);
+		menu.Opening += delegate
+		{
+			copyItem.Enabled = lstItems.SelectedItems.Count > 0;
+			pasteItem.Enabled = UpdateClipboard.HasContent
+				&& !string.Equals(UpdateClipboard.SourceProvider, provider, StringComparison.OrdinalIgnoreCase);
+		};
+		lstItems.ContextMenuStrip = menu;
 	}
 
 	private void tmrLoad_Tick(object sender, EventArgs e)
@@ -505,6 +556,7 @@ catch (Exception ex)
 				frmMain.lblItems.Visible = true;
 				frmMain.pbBusy.Visible = true;
 				frmMain.RefreshUndoRedoButtons();
+				frmMain.RefreshEditButtons();
 				if (bw.IsBusy)
 				{
 					// Show real progress once the total is known. A marquee gave no idea whether a provider
