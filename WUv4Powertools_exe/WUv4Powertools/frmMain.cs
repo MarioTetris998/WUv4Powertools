@@ -613,10 +613,12 @@ public class frmMain : Form
 		// Escaping the EULA link is mechanical, so it is simply done. A malformed installation
 		// block cannot be rewritten safely and is only ever reported.
 		int eulaFixed = list.RepairEulaEscaping();
+		int orphanIndex = list.RepairOrphanedIndexEntries();
+		int orphanStrings = list.RepairOrphanedStringIndex();
 		int coverageGaps;
 		string issues = list.ValidateProvider(out coverageGaps);
 
-		if (issues == null && rejoined == 0 && duplicates == 0 && eulaFixed == 0 && coverageGaps == 0)
+		if (issues == null && rejoined == 0 && duplicates == 0 && eulaFixed == 0 && orphanIndex == 0 && orphanStrings == 0 && coverageGaps == 0)
 		{
 			MessageBox.Show("This provider is consistent. Nothing needed repairing.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
 			return;
@@ -634,6 +636,14 @@ public class frmMain : Form
 		if (eulaFixed > 0)
 		{
 			report += eulaFixed + " EULA links were escaped so they no longer break the catalog XML.\n";
+		}
+		if (orphanIndex > 0)
+		{
+			report += orphanIndex + " index entries pointing at a missing update were removed.\n";
+		}
+		if (orphanStrings > 0)
+		{
+			report += orphanStrings + " string entries pointing at a missing row were removed.\n";
 		}
 		if (issues != null)
 		{

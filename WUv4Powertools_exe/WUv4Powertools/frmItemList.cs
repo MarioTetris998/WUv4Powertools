@@ -762,26 +762,46 @@ catch (Exception ex)
 
 	// A stray newline inside a record splits one logical line into two physical ones. That cuts the
 	// installation block in half, which is what makes the catalog fail to parse and blanks the whole
-	// result list. Because a record's opening is recognisable, a line that does not open one is a
-	// continuation of the line above and can be joined back on. Returns the number of lines rejoined.
+	// result list. A line that does not open a record is a continuation of the line above it.
+	//
+	// The opening token is taken from each file's OWN first line, never from the folder name. A copied
+	// or renamed folder still holds records naming the original provider, so keying off the folder
+	// would match nothing and collapse every line in the file into one.
 	public int RepairSplitRecords()
 	{
 		int joins = 0;
-		joins += RejoinRecords(ref l_items, null);
-		joins += RejoinRecords(ref l_itemsindex, provider + ".");
-		joins += RejoinRecords(ref l_itemstringsindex, provider + ".");
-		joins += RejoinRecords(ref l_itemstrings, provider + ".");
-		joins += RejoinRecords(ref l_product2items, provider + ".");
+		joins += RejoinRecords(ref l_items, null, true);
+		joins += RejoinRecords(ref l_itemsindex, DeriveRecordPrefix(l_itemsindex));
+		joins += RejoinRecords(ref l_itemstringsindex, DeriveRecordPrefix(l_itemstringsindex));
+		joins += RejoinRecords(ref l_itemstrings, DeriveRecordPrefix(l_itemstrings));
+		joins += RejoinRecords(ref l_product2items, DeriveRecordPrefix(l_product2items));
 		return joins;
 	}
 
-	// expectedPrefix null means use the items.txt GUID rule instead of a provider prefix.
-	private static int RejoinRecords(ref string[] arr, string expectedPrefix)
+	// The leading token of the file's first record, up to and including the first dot. Null when it
+	// cannot be established, in which case that file is left alone rather than guessed at.
+	private static string DeriveRecordPrefix(string[] arr)
 	{
-		if (arr == null || arr.Length == 0)
+		if (arr == null) return null;
+		foreach (string line in arr)
 		{
-			return 0;
+			if (string.IsNullOrEmpty(line)) continue;
+			// itemstrings.txt is UTF-16 with a byte order mark. If one survives into the first line
+			// it would poison the token and make every following line look like a continuation.
+			string first = line.TrimStart('\ufeff');
+			int dot = first.IndexOf('.');
+			if (dot <= 0) return null;
+			return first.Substring(0, dot + 1);
 		}
+		return null;
+	}
+
+	// expectedPrefix null with an items.txt array means use the GUID rule. A null prefix for any
+	// other file means the opening token could not be established, so nothing is touched.
+	private static int RejoinRecords(ref string[] arr, string expectedPrefix, bool guidRule = false)
+	{
+		if (arr == null || arr.Length == 0) return 0;
+		if (!guidRule && expectedPrefix == null) return 0;
 		List<string> joined = new List<string>(arr.Length);
 		int lastRecord = -1;
 		int joins = 0;
@@ -792,9 +812,10 @@ catch (Exception ex)
 				joined.Add(line);
 				continue;
 			}
-			bool startsRecord = (expectedPrefix == null)
-				? ItemsRecordStart.IsMatch(line)
-				: line.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase);
+			string candidate = line.TrimStart('\ufeff');
+			bool startsRecord = guidRule
+				? ItemsRecordStart.IsMatch(candidate)
+				: candidate.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase);
 			if (startsRecord || lastRecord < 0)
 			{
 				joined.Add(line);
@@ -806,12 +827,19 @@ catch (Exception ex)
 				joins++;
 			}
 		}
+		// A genuine split affects a handful of records. Anything that would swallow most of the file
+		// means the opening token is wrong for this data, so leave it untouched rather than destroy it.
+		if (joins > arr.Length / 4)
+		{
+			return 0;
+		}
 		if (joins > 0)
 		{
 			arr = joined.ToArray();
 		}
 		return joins;
 	}
+
 
 	// Set by the background load when building the list throws. The failure is dealt with on the UI
 	// thread by the completion handler, rather than a message box being raised from the worker.
@@ -847,12 +875,16 @@ catch (Exception ex)
 		int rejoined = RepairSplitRecords();
 		int duplicates = SanitizeProvider();
 		int eulaFixed = RepairEulaEscaping();
+		int orphanIndex = RepairOrphanedIndexEntries();
+		int orphanStrings = RepairOrphanedStringIndex();
 		List<string> stillBroken = FindCatalogBreakingRecords();
 
 		System.Text.StringBuilder sb = new System.Text.StringBuilder();
 		sb.AppendLine(rejoined + " split records were joined back together.");
 		sb.AppendLine(duplicates + " duplicate lines were removed.");
 		sb.AppendLine(eulaFixed + " EULA links were escaped.");
+		sb.AppendLine(orphanIndex + " index entries pointing at a missing update were removed.");
+		sb.AppendLine(orphanStrings + " string entries pointing at a missing row were removed.");
 		if (stillBroken.Count > 0)
 		{
 			sb.AppendLine();
@@ -1006,10 +1038,13 @@ catch (Exception ex)
 		foreach (string line in l_itemsindex ?? new string[0])
 		{
 			if (string.IsNullOrEmpty(line)) continue;
-			int comma = line.LastIndexOf(',');
-			if (comma <= 0) continue;
-			indexKeys.Add(line.Substring(0, comma).Trim());
-			string guid = line.Substring(comma + 1).Replace("@|", "").Trim();
+			// The GUID is the last comma field BEFORE the first @|, because everything after that
+			// separator is the dependencies field written by the prerequisites feature. Reading to
+			// the last comma on the whole line glues the GUID onto a prerequisite reference and makes
+			// every line that has prerequisites look like it points at a missing update.
+			string key = IndexItemId(line);
+			string guid = IndexGuid(line);
+			if (key.Length > 0) indexKeys.Add(key.Trim());
 			if (guid.Length > 0 && !itemGuids.Contains(guid)) orphanIndexGuids++;
 		}
 
@@ -1041,9 +1076,10 @@ catch (Exception ex)
 		foreach (string line in l_itemstringsindex ?? new string[0])
 		{
 			if (string.IsNullOrEmpty(line)) continue;
-			int comma = line.LastIndexOf(',');
+			string head = line.Split(FieldSeparator, StringSplitOptions.None)[0];
+			int comma = head.LastIndexOf(',');
 			if (comma <= 0) continue;
-			string target = line.Substring(comma + 1).Trim();
+			string target = head.Substring(comma + 1).Trim();
 			if (target.Length > 0 && !stringSetGuids.Contains(target)) missingStringRows++;
 		}
 
@@ -1081,8 +1117,8 @@ catch (Exception ex)
 		foreach (string line in l_itemsindex)
 		{
 			if (string.IsNullOrEmpty(line)) continue;
-			int comma = line.LastIndexOf(',');
-			if (comma > 0) indexKeys.Add(line.Substring(0, comma).Trim());
+			string key = IndexItemId(line);
+			if (key.Length > 0) indexKeys.Add(key.Trim());
 		}
 		int dropped = 0;
 		List<string> rebuilt = new List<string>(l_product2items.Length);
@@ -1108,6 +1144,72 @@ catch (Exception ex)
 	// stay contiguous and in the same relative order across every file. Call on the UI thread (it reads
 	// the ListView) before saving. No-op unless the user actually reordered.
 	public bool orderWasChanged => orderChanged;
+
+	// itemsindex line = "<itemID>,<GUID>@|<dependencies>". Returns the GUID only.
+	private static string IndexGuid(string line)
+	{
+		string beforeAt = line.Split(FieldSeparator, StringSplitOptions.None)[0];
+		int lastComma = beforeAt.LastIndexOf(',');
+		return (lastComma > 0) ? beforeAt.Substring(lastComma + 1).Trim() : string.Empty;
+	}
+
+	// Drops itemsindex lines whose GUID has no items.txt row. Such a line offers an update that
+	// resolves to nothing, so removing it is what makes the provider consistent again.
+	public int RepairOrphanedIndexEntries()
+	{
+		if (l_itemsindex == null || l_items == null) return 0;
+		HashSet<string> itemGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (string line in l_items)
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+			int comma = line.IndexOf(',');
+			if (comma > 0) itemGuids.Add(line.Substring(0, comma).Trim());
+		}
+		List<string> kept = new List<string>(l_itemsindex.Length);
+		int dropped = 0;
+		foreach (string line in l_itemsindex)
+		{
+			if (string.IsNullOrEmpty(line)) { kept.Add(line); continue; }
+			string guid = IndexGuid(line);
+			if (guid.Length > 0 && !itemGuids.Contains(guid)) { dropped++; continue; }
+			kept.Add(line);
+		}
+		if (dropped > 0) l_itemsindex = kept.ToArray();
+		return dropped;
+	}
+
+	// Drops itemstringsindex lines pointing at an itemstrings row that does not exist. Such a line
+	// leaves an update with no title or description for that locale.
+	public int RepairOrphanedStringIndex()
+	{
+		if (l_itemstringsindex == null || l_itemstrings == null) return 0;
+		HashSet<string> stringSetGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (string line in l_itemstrings)
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+			int comma = line.IndexOf(',');
+			if (comma <= 0) continue;
+			string k = line.Substring(0, comma);
+			int dot = k.LastIndexOf('.');
+			stringSetGuids.Add(((dot >= 0) ? k.Substring(dot + 1) : k).Trim());
+		}
+		List<string> kept = new List<string>(l_itemstringsindex.Length);
+		int dropped = 0;
+		foreach (string line in l_itemstringsindex)
+		{
+			if (string.IsNullOrEmpty(line)) { kept.Add(line); continue; }
+			string head = line.Split(FieldSeparator, StringSplitOptions.None)[0];
+			int comma = head.LastIndexOf(',');
+			if (comma > 0)
+			{
+				string target = head.Substring(comma + 1).Trim();
+				if (target.Length > 0 && !stringSetGuids.Contains(target)) { dropped++; continue; }
+			}
+			kept.Add(line);
+		}
+		if (dropped > 0) l_itemstringsindex = kept.ToArray();
+		return dropped;
+	}
 
 	// itemsindex line = "<itemID>,<GUID>@|...". Returns the itemID (incl. provider prefix).
 	private static string IndexItemId(string line)
