@@ -1485,7 +1485,36 @@ public class frmAddUpdate : Form
 				int num7 = frmItemList.l_itemstrings.Length;
 				int newSize3 = frmItemList.l_itemstrings.Length + languageCount;
 				Array.Resize(ref frmItemList.l_itemstrings, newSize3);
-				
+
+				// Translate the title and description into every language at once. This previously made two
+				// sequential Google Translate calls per language inside the loop below, roughly 54 calls one
+				// after another on a client with no timeout set, which is what made adding an update crawl.
+				// The source language is never sent, and a failed or timed out call falls back to the original
+				// text so an add still completes offline instead of hanging or throwing.
+				string[] translatedTitles = new string[languageCount];
+				string[] translatedDescriptions = new string[languageCount];
+				Parallel.For(0, languageCount, new ParallelOptions { MaxDegreeOfParallelism = 12 }, li =>
+				{
+					string lang = baseLangs[li];
+					bool sameAsSource = string.Equals(lang, _cmbLang, StringComparison.OrdinalIgnoreCase);
+					try
+					{
+						translatedTitles[li] = sameAsSource ? _txtTitle : TranslateText(_txtTitle, _cmbLang, lang);
+					}
+					catch (Exception)
+					{
+						translatedTitles[li] = _txtTitle;
+					}
+					try
+					{
+						translatedDescriptions[li] = sameAsSource ? _txtDescription : TranslateText(_txtDescription, _cmbLang, lang);
+					}
+					catch (Exception)
+					{
+						translatedDescriptions[li] = _txtDescription;
+					}
+				});
+
 				// Use explicit bounds to prevent off-by-one errors
 				for (int l = 0; l < languageCount; l++)
 				{
@@ -1508,7 +1537,7 @@ public class frmAddUpdate : Form
 					{
 						text5 = string.Format(_txtEULA);
 					}
-					string text6 = $"{frmItemList.provider}.{langGuids[l]},{TranslateText(_txtTitle, _cmbLang, baseLangs[l])}@|{TranslateText(_txtDescription, _cmbLang, baseLangs[l])}@|{baseLangs[l]}/eula.htm@|@|{text5}";
+					string text6 = $"{frmItemList.provider}.{langGuids[l]},{translatedTitles[l]}@|{translatedDescriptions[l]}@|{baseLangs[l]}/eula.htm@|@|{text5}";
 					Console.WriteLine(text6);
 					frmItemList.l_itemstrings[targetIndex] = text6;
 				}
@@ -1533,6 +1562,28 @@ public class frmAddUpdate : Form
 		}
 	}
 
+	// WebClient defaults to a 100 second timeout, so a single unreachable translate call used to
+	// stall an add for over a minute. This caps each request instead.
+	private sealed class TimedWebClient : WebClient
+	{
+		private readonly int timeoutMs;
+
+		public TimedWebClient(int timeoutMs)
+		{
+			this.timeoutMs = timeoutMs;
+		}
+
+		protected override WebRequest GetWebRequest(Uri address)
+		{
+			WebRequest request = base.GetWebRequest(address);
+			if (request != null)
+			{
+				request.Timeout = timeoutMs;
+			}
+			return request;
+		}
+	}
+
 	public string TranslateText(string input, string inLang, string outLang)
 	{
 		string _outlang = outLang;
@@ -1553,7 +1604,7 @@ public class frmAddUpdate : Form
 			_outlang = "pt";
 		}
 		string url = $"https://translate.googleapis.com/translate_a/single?client=gtx&sl={inLang}&tl={_outlang}&dt=t&q={Uri.EscapeUriString(input)}";
-		using WebClient webClient = new WebClient();
+		using TimedWebClient webClient = new TimedWebClient(8000);
 		webClient.Encoding = Encoding.UTF8;
 		string result = webClient.DownloadString(url);
 		dynamic translationItems = new JavaScriptSerializer().Deserialize<List<object>>(result)[0];

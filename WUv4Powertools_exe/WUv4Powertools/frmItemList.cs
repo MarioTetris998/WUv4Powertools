@@ -378,8 +378,14 @@ catch (Exception ex)
 				}
 			}
 		}
-		catch (Exception)
+		catch (ObjectDisposedException)
 		{
+			// The form closed while the background load was still reporting progress.
+		}
+		catch (InvalidOperationException)
+		{
+			// Same race, seen as a handle that is no longer valid. Any other failure is a real bug
+			// and is now allowed to surface rather than being swallowed silently.
 		}
 	}
 

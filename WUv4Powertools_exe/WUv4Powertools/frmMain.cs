@@ -119,6 +119,8 @@ public class frmMain : Form
 
 	private ToolStripMenuItem toolsToolStripMenuItem;
 
+	private ToolStripMenuItem repairProviderToolStripMenuItem;
+
 	private ToolStripMenuItem customizeToolStripMenuItem;
 
 	private ToolStripMenuItem optionsToolStripMenuItem;
@@ -598,6 +600,51 @@ public class frmMain : Form
 		}).Start();
 	}
 
+	// Reports what does not line up across the five dictionary files and offers to drop the
+	// product2items references that resolve to nothing. Repairing only edits the in memory copy,
+	// so nothing reaches disk until the provider is saved.
+	private void repairProviderToolStripMenuItem_Click(object sender, EventArgs e)
+	{
+		frmItemList list = mdiTabs.SelectedForm as frmItemList;
+		if (list == null)
+		{
+			MessageBox.Show("Open a provider first.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			return;
+		}
+
+		int duplicates = list.SanitizeProvider();
+		string issues = list.ValidateProvider();
+		if (issues == null && duplicates == 0)
+		{
+			MessageBox.Show("This provider is consistent. Nothing needed repairing.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			return;
+		}
+
+		string report = "";
+		if (duplicates > 0)
+		{
+			report += duplicates + " duplicate lines were removed.\n";
+		}
+		if (issues != null)
+		{
+			report += "\n" + issues;
+		}
+
+		if (issues == null)
+		{
+			MessageBox.Show(report + "\nSave the provider to write this to disk.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			return;
+		}
+
+		if (MessageBox.Show(report + "\nDrop the references that resolve to nothing?", "Windows Update v4.0 PowerTools", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+		{
+			return;
+		}
+
+		int dropped = list.RepairDanglingReferences();
+		MessageBox.Show(dropped + " unresolvable references were dropped.\n\nSave the provider to write this to disk.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
+	}
+
 	// Writes the five dictionary files as one unit. Every file goes to a temp file first and is only
 	// swapped in once all five have been written, so a failure part way through leaves the provider
 	// exactly as it was. The catalog parses each file whole, so a half written provider stops loading
@@ -714,24 +761,31 @@ public class frmMain : Form
 
 	private void txtSearch_TextChanged(object sender, EventArgs e)
 	{
-		try
+		frmItemList list = base.Tag as frmItemList;
+		if (list == null)
 		{
-			if (txtSearch.Text.Length > 0)
+			return;
+		}
+		string term = txtSearch.Text;
+		foreach (ListViewItem item in list.lstItems.Items)
+		{
+			item.BackColor = (term.Length > 0 && ItemMatches(item, term)) ? Color.LightYellow : Color.Transparent;
+		}
+	}
+
+	// Matches on every column rather than the title alone, and ignores case. Update codes are mixed
+	// case and a provider can hold thousands of rows, so a case sensitive title only search missed
+	// most of what people were looking for.
+	private static bool ItemMatches(ListViewItem item, string term)
+	{
+		foreach (ListViewItem.ListViewSubItem sub in item.SubItems)
+		{
+			if (sub.Text != null && sub.Text.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0)
 			{
-				foreach (ListViewItem item in ((frmItemList)base.Tag).lstItems.Items)
-				{
-					item.BackColor = (item.Text.Contains(txtSearch.Text) ? Color.LightYellow : Color.Transparent);
-				}
-				return;
-			}
-			foreach (ListViewItem item2 in ((frmItemList)base.Tag).lstItems.Items)
-			{
-				item2.BackColor = Color.Transparent;
+				return true;
 			}
 		}
-		catch
-		{
-		}
+		return false;
 	}
 
 	private void btnFindNext_Click(object sender, EventArgs e)
@@ -963,6 +1017,7 @@ public class frmMain : Form
 		this.toolStripSeparator5 = new System.Windows.Forms.ToolStripSeparator();
 		this.selectAllToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.toolsToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+		this.repairProviderToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.customizeToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.optionsToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.helpToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
@@ -1135,7 +1190,11 @@ public class frmMain : Form
 		this.selectAllToolStripMenuItem.Name = "selectAllToolStripMenuItem";
 		this.selectAllToolStripMenuItem.Size = new System.Drawing.Size(144, 22);
 		this.selectAllToolStripMenuItem.Text = "Select &All";
-		this.toolsToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[2] { this.customizeToolStripMenuItem, this.optionsToolStripMenuItem });
+		this.toolsToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[3] { this.repairProviderToolStripMenuItem, this.customizeToolStripMenuItem, this.optionsToolStripMenuItem });
+		this.repairProviderToolStripMenuItem.Name = "repairProviderToolStripMenuItem";
+		this.repairProviderToolStripMenuItem.Size = new System.Drawing.Size(190, 22);
+		this.repairProviderToolStripMenuItem.Text = "&Validate and Repair Provider";
+		this.repairProviderToolStripMenuItem.Click += new System.EventHandler(repairProviderToolStripMenuItem_Click);
 		this.toolsToolStripMenuItem.Name = "toolsToolStripMenuItem";
 		this.toolsToolStripMenuItem.Size = new System.Drawing.Size(47, 20);
 		this.toolsToolStripMenuItem.Text = "&Tools";
