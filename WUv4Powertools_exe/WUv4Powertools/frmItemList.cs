@@ -504,6 +504,7 @@ catch (Exception ex)
 			{
 				frmMain.lblItems.Visible = true;
 				frmMain.pbBusy.Visible = true;
+				frmMain.RefreshUndoRedoButtons();
 				if (bw.IsBusy)
 				{
 					// Show real progress once the total is known. A marquee gave no idea whether a provider

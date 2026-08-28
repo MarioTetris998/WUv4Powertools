@@ -866,6 +866,19 @@ public class frmMain : Form
 		UpdateStatusForTab();
 	}
 
+	// The history changes whenever an edit dialog commits, and nothing told the toolbar about it,
+	// so the buttons stayed as they were until the tab was switched. The load timer calls this.
+	public void RefreshUndoRedoButtons()
+	{
+		frmItemList list = mdiTabs.SelectedForm as frmItemList;
+		bool canUndo = (list != null) && list.CanUndo;
+		bool canRedo = (list != null) && list.CanRedo;
+		btnUndo.Enabled = canUndo;
+		btnRedo.Enabled = canRedo;
+		undoToolStripMenuItem.Enabled = canUndo;
+		redoToolStripMenuItem.Enabled = canRedo;
+	}
+
 	private void undoToolStripMenuItem_Click(object sender, EventArgs e)
 	{
 		frmItemList list = mdiTabs.SelectedForm as frmItemList;
@@ -901,10 +914,7 @@ public class frmMain : Form
 			redoToolStripMenuItem.Enabled = false;
 			return;
 		}
-		btnUndo.Enabled = list.CanUndo;
-		btnRedo.Enabled = list.CanRedo;
-		undoToolStripMenuItem.Enabled = list.CanUndo;
-		redoToolStripMenuItem.Enabled = list.CanRedo;
+		RefreshUndoRedoButtons();
 		lblItems.Visible = true;
 		pbBusy.Visible = true;
 		lblItems.Text = list.VisibleItemCount + " items";

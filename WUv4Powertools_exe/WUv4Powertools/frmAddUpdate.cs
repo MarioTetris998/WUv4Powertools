@@ -1999,13 +1999,18 @@ public class frmAddUpdate : Form
 		this.txtFileName.Name = "txtFileName";
 		this.txtFileName.Size = new System.Drawing.Size(217, 20);
 		this.txtFileName.TabIndex = 7;
-		this.txtDetection.Location = new System.Drawing.Point(15, 268);
+		// This holds a long XML detection fragment. It used to be eight pixels tall so its bottom
+		// lined up with the download group box, which made it unreadable and unusable. It now runs
+		// the full width below both columns, where there is free space.
+		this.txtDetection.Location = new System.Drawing.Point(15, 304);
 		this.txtDetection.Multiline = true;
+		this.txtDetection.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
+		this.txtDetection.WordWrap = true;
 		this.txtDetection.Name = "txtDetection";
-		this.txtDetection.Size = new System.Drawing.Size(168, 8);
+		this.txtDetection.Size = new System.Drawing.Size(413, 100);
 		this.txtDetection.TabIndex = 10;
 		this.lblDetection.AutoSize = true;
-		this.lblDetection.Location = new System.Drawing.Point(12, 133);
+		this.lblDetection.Location = new System.Drawing.Point(12, 288);
 		this.lblDetection.Name = "lblDetection";
 		this.lblDetection.Size = new System.Drawing.Size(56, 13);
 		this.lblDetection.TabIndex = 10;
