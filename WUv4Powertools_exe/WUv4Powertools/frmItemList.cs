@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
@@ -1397,43 +1397,6 @@ catch (Exception ex)
 		if (dropped > 0) l_itemsindex = kept.ToArray();
 		return dropped;
 	}
-
-	// Drops itemstringsindex lines pointing at an itemstrings row that does not exist.
-	//
-	// Deliberately NOT part of either repair. Titles and descriptions are routinely kept for more
-	// languages than there are update files, so an entry with nothing behind it is normal here and
-	// removing it would throw away work. Left available for a caller that genuinely wants it.
-	public int RepairOrphanedStringIndex()
-	{
-		if (l_itemstringsindex == null || l_itemstrings == null) return 0;
-		HashSet<string> stringSetGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-		foreach (string line in l_itemstrings)
-		{
-			if (string.IsNullOrEmpty(line)) continue;
-			int comma = line.IndexOf(',');
-			if (comma <= 0) continue;
-			string k = line.Substring(0, comma);
-			int dot = k.LastIndexOf('.');
-			stringSetGuids.Add(((dot >= 0) ? k.Substring(dot + 1) : k).Trim());
-		}
-		List<string> kept = new List<string>(l_itemstringsindex.Length);
-		int dropped = 0;
-		foreach (string line in l_itemstringsindex)
-		{
-			if (string.IsNullOrEmpty(line)) { kept.Add(line); continue; }
-			string head = line.Split(FieldSeparator, StringSplitOptions.None)[0];
-			int comma = head.LastIndexOf(',');
-			if (comma > 0)
-			{
-				string target = head.Substring(comma + 1).Trim();
-				if (target.Length > 0 && !stringSetGuids.Contains(target)) { dropped++; continue; }
-			}
-			kept.Add(line);
-		}
-		if (dropped > 0) l_itemstringsindex = kept.ToArray();
-		return dropped;
-	}
-
 	// itemsindex line = "<itemID>,<GUID>@|...". Returns the itemID (incl. provider prefix).
 	private static string IndexItemId(string line)
 	{
@@ -1615,7 +1578,7 @@ catch (Exception ex)
 		this.lstItems.HideSelection = false;
 		this.lstItems.LabelEdit = true;
 		this.lstItems.Location = new System.Drawing.Point(0, 0);
-		this.lstItems.MultiSelect = false;
+		this.lstItems.MultiSelect = true;
 		this.lstItems.Name = "lstItems";
 		this.lstItems.Size = new System.Drawing.Size(599, 450);
 		this.lstItems.SmallImageList = this.imgLst;

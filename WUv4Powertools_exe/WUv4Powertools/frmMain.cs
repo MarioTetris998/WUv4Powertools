@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -93,12 +93,6 @@ public class frmMain : Form
 
 	private ToolStripSeparator toolStripSeparator1;
 
-	private ToolStripMenuItem printToolStripMenuItem;
-
-	private ToolStripMenuItem printPreviewToolStripMenuItem;
-
-	private ToolStripSeparator toolStripSeparator3;
-
 	private ToolStripMenuItem exitToolStripMenuItem;
 
 	private ToolStripMenuItem editToolStripMenuItem;
@@ -108,8 +102,6 @@ public class frmMain : Form
 	private ToolStripMenuItem redoToolStripMenuItem;
 
 	private ToolStripSeparator toolStripSeparator4;
-
-	private ToolStripMenuItem cutToolStripMenuItem;
 
 	private ToolStripMenuItem copyToolStripMenuItem;
 
@@ -125,19 +117,7 @@ public class frmMain : Form
 
 	private ToolStripMenuItem repairProviderToolStripMenuItem;
 
-	private ToolStripMenuItem customizeToolStripMenuItem;
-
-	private ToolStripMenuItem optionsToolStripMenuItem;
-
 	private ToolStripMenuItem helpToolStripMenuItem;
-
-	private ToolStripMenuItem contentsToolStripMenuItem;
-
-	private ToolStripMenuItem indexToolStripMenuItem;
-
-	private ToolStripMenuItem searchToolStripMenuItem;
-
-	private ToolStripSeparator toolStripSeparator8;
 
 	private ToolStripMenuItem aboutToolStripMenuItem;
 
@@ -721,6 +701,23 @@ public class frmMain : Form
 		MessageBox.Show(sb.ToString(), "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
 	}
 
+	private void selectAllToolStripMenuItem_Click(object sender, EventArgs e)
+	{
+		frmItemList list = mdiTabs.SelectedForm as frmItemList;
+		if (list == null)
+		{
+			return;
+		}
+		list.lstItems.BeginUpdate();
+		foreach (ListViewItem row in list.lstItems.Items)
+		{
+			row.Selected = true;
+		}
+		list.lstItems.EndUpdate();
+		list.lstItems.Focus();
+		RefreshEditButtons();
+	}
+
 	private void copyToolStripButton_Click(object sender, EventArgs e)
 	{
 		CopySelectedUpdates();
@@ -755,9 +752,12 @@ public class frmMain : Form
 		frmItemList list = mdiTabs.SelectedForm as frmItemList;
 		bool hasSelection = list != null && list.lstItems.SelectedItems.Count > 0;
 		copyToolStripButton.Enabled = hasSelection;
+		copyToolStripMenuItem.Enabled = hasSelection;
+		selectAllToolStripMenuItem.Enabled = list != null;
 		bool canPaste = list != null && UpdateClipboard.HasContent
 			&& !string.Equals(UpdateClipboard.SourceProvider, list.provider, StringComparison.OrdinalIgnoreCase);
 		pasteToolStripButton.Enabled = canPaste;
+		pasteToolStripMenuItem.Enabled = canPaste;
 	}
 
 	// Reports what does not line up across the five dictionary files and offers to drop the
@@ -1253,15 +1253,11 @@ public class frmMain : Form
 		this.toolStripSeparator = new System.Windows.Forms.ToolStripSeparator();
 		this.saveToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.toolStripSeparator1 = new System.Windows.Forms.ToolStripSeparator();
-		this.printToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-		this.printPreviewToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-		this.toolStripSeparator3 = new System.Windows.Forms.ToolStripSeparator();
 		this.exitToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.editToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.undoToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.redoToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.toolStripSeparator4 = new System.Windows.Forms.ToolStripSeparator();
-		this.cutToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.copyToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.pasteToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.toolStripSeparator5 = new System.Windows.Forms.ToolStripSeparator();
@@ -1269,13 +1265,7 @@ public class frmMain : Form
 		this.toolsToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.restoreBackupToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.repairProviderToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-		this.customizeToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-		this.optionsToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.helpToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-		this.contentsToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-		this.indexToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-		this.searchToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-		this.toolStripSeparator8 = new System.Windows.Forms.ToolStripSeparator();
 		this.aboutToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.tbSearch = new System.Windows.Forms.ToolStrip();
 		this.btnFindNext = new System.Windows.Forms.ToolStripButton();
@@ -1370,7 +1360,7 @@ public class frmMain : Form
 		// The menu bar carries the Tools commands, so it has to be on screen for them to be
 		// reachable at all.
 		this.menuStrip1.Visible = true;
-		this.fileToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[8] { this.openToolStripMenuItem, this.toolStripSeparator, this.saveToolStripMenuItem, this.toolStripSeparator1, this.printToolStripMenuItem, this.printPreviewToolStripMenuItem, this.toolStripSeparator3, this.exitToolStripMenuItem });
+		this.fileToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[5] { this.openToolStripMenuItem, this.toolStripSeparator, this.saveToolStripMenuItem, this.toolStripSeparator1, this.exitToolStripMenuItem });
 		this.fileToolStripMenuItem.Name = "fileToolStripMenuItem";
 		this.fileToolStripMenuItem.Size = new System.Drawing.Size(37, 20);
 		this.fileToolStripMenuItem.Text = "&File";
@@ -1392,23 +1382,10 @@ public class frmMain : Form
 		this.saveToolStripMenuItem.Click += new System.EventHandler(saveToolStripButton_Click);
 		this.toolStripSeparator1.Name = "toolStripSeparator1";
 		this.toolStripSeparator1.Size = new System.Drawing.Size(143, 6);
-		this.printToolStripMenuItem.Image = (System.Drawing.Image)resources.GetObject("printToolStripMenuItem.Image");
-		this.printToolStripMenuItem.ImageTransparentColor = System.Drawing.Color.Magenta;
-		this.printToolStripMenuItem.Name = "printToolStripMenuItem";
-		this.printToolStripMenuItem.ShortcutKeys = System.Windows.Forms.Keys.P | System.Windows.Forms.Keys.Control;
-		this.printToolStripMenuItem.Size = new System.Drawing.Size(146, 22);
-		this.printToolStripMenuItem.Text = "&Print";
-		this.printPreviewToolStripMenuItem.Image = (System.Drawing.Image)resources.GetObject("printPreviewToolStripMenuItem.Image");
-		this.printPreviewToolStripMenuItem.ImageTransparentColor = System.Drawing.Color.Magenta;
-		this.printPreviewToolStripMenuItem.Name = "printPreviewToolStripMenuItem";
-		this.printPreviewToolStripMenuItem.Size = new System.Drawing.Size(146, 22);
-		this.printPreviewToolStripMenuItem.Text = "Print Pre&view";
-		this.toolStripSeparator3.Name = "toolStripSeparator3";
-		this.toolStripSeparator3.Size = new System.Drawing.Size(143, 6);
 		this.exitToolStripMenuItem.Name = "exitToolStripMenuItem";
 		this.exitToolStripMenuItem.Size = new System.Drawing.Size(146, 22);
 		this.exitToolStripMenuItem.Text = "E&xit";
-		this.editToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[8] { this.undoToolStripMenuItem, this.redoToolStripMenuItem, this.toolStripSeparator4, this.cutToolStripMenuItem, this.copyToolStripMenuItem, this.pasteToolStripMenuItem, this.toolStripSeparator5, this.selectAllToolStripMenuItem });
+		this.editToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[7] { this.undoToolStripMenuItem, this.redoToolStripMenuItem, this.toolStripSeparator4, this.copyToolStripMenuItem, this.pasteToolStripMenuItem, this.toolStripSeparator5, this.selectAllToolStripMenuItem });
 		this.editToolStripMenuItem.Name = "editToolStripMenuItem";
 		this.editToolStripMenuItem.Size = new System.Drawing.Size(39, 20);
 		this.editToolStripMenuItem.Text = "&Edit";
@@ -1424,30 +1401,27 @@ public class frmMain : Form
 		this.redoToolStripMenuItem.Click += new System.EventHandler(redoToolStripMenuItem_Click);
 		this.toolStripSeparator4.Name = "toolStripSeparator4";
 		this.toolStripSeparator4.Size = new System.Drawing.Size(141, 6);
-		this.cutToolStripMenuItem.Image = (System.Drawing.Image)resources.GetObject("cutToolStripMenuItem.Image");
-		this.cutToolStripMenuItem.ImageTransparentColor = System.Drawing.Color.Magenta;
-		this.cutToolStripMenuItem.Name = "cutToolStripMenuItem";
-		this.cutToolStripMenuItem.ShortcutKeys = System.Windows.Forms.Keys.X | System.Windows.Forms.Keys.Control;
-		this.cutToolStripMenuItem.Size = new System.Drawing.Size(144, 22);
-		this.cutToolStripMenuItem.Text = "Cu&t";
 		this.copyToolStripMenuItem.Image = (System.Drawing.Image)resources.GetObject("copyToolStripMenuItem.Image");
 		this.copyToolStripMenuItem.ImageTransparentColor = System.Drawing.Color.Magenta;
 		this.copyToolStripMenuItem.Name = "copyToolStripMenuItem";
 		this.copyToolStripMenuItem.ShortcutKeys = System.Windows.Forms.Keys.C | System.Windows.Forms.Keys.Control;
 		this.copyToolStripMenuItem.Size = new System.Drawing.Size(144, 22);
 		this.copyToolStripMenuItem.Text = "&Copy";
+		this.copyToolStripMenuItem.Click += new System.EventHandler(copyToolStripButton_Click);
 		this.pasteToolStripMenuItem.Image = (System.Drawing.Image)resources.GetObject("pasteToolStripMenuItem.Image");
 		this.pasteToolStripMenuItem.ImageTransparentColor = System.Drawing.Color.Magenta;
 		this.pasteToolStripMenuItem.Name = "pasteToolStripMenuItem";
 		this.pasteToolStripMenuItem.ShortcutKeys = System.Windows.Forms.Keys.V | System.Windows.Forms.Keys.Control;
 		this.pasteToolStripMenuItem.Size = new System.Drawing.Size(144, 22);
 		this.pasteToolStripMenuItem.Text = "&Paste";
+		this.pasteToolStripMenuItem.Click += new System.EventHandler(pasteToolStripButton_Click);
 		this.toolStripSeparator5.Name = "toolStripSeparator5";
 		this.toolStripSeparator5.Size = new System.Drawing.Size(141, 6);
 		this.selectAllToolStripMenuItem.Name = "selectAllToolStripMenuItem";
 		this.selectAllToolStripMenuItem.Size = new System.Drawing.Size(144, 22);
 		this.selectAllToolStripMenuItem.Text = "Select &All";
-		this.toolsToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[4] { this.repairProviderToolStripMenuItem, this.restoreBackupToolStripMenuItem, this.customizeToolStripMenuItem, this.optionsToolStripMenuItem });
+		this.selectAllToolStripMenuItem.Click += new System.EventHandler(selectAllToolStripMenuItem_Click);
+		this.toolsToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[2] { this.repairProviderToolStripMenuItem, this.restoreBackupToolStripMenuItem });
 		this.restoreBackupToolStripMenuItem.Name = "restoreBackupToolStripMenuItem";
 		this.restoreBackupToolStripMenuItem.Size = new System.Drawing.Size(190, 22);
 		this.restoreBackupToolStripMenuItem.Text = "&Undo Last Save";
@@ -1459,27 +1433,10 @@ public class frmMain : Form
 		this.toolsToolStripMenuItem.Name = "toolsToolStripMenuItem";
 		this.toolsToolStripMenuItem.Size = new System.Drawing.Size(47, 20);
 		this.toolsToolStripMenuItem.Text = "&Tools";
-		this.customizeToolStripMenuItem.Name = "customizeToolStripMenuItem";
-		this.customizeToolStripMenuItem.Size = new System.Drawing.Size(130, 22);
-		this.customizeToolStripMenuItem.Text = "&Customize";
-		this.optionsToolStripMenuItem.Name = "optionsToolStripMenuItem";
-		this.optionsToolStripMenuItem.Size = new System.Drawing.Size(130, 22);
-		this.optionsToolStripMenuItem.Text = "&Options";
-		this.helpToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[5] { this.contentsToolStripMenuItem, this.indexToolStripMenuItem, this.searchToolStripMenuItem, this.toolStripSeparator8, this.aboutToolStripMenuItem });
+		this.helpToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[1] { this.aboutToolStripMenuItem });
 		this.helpToolStripMenuItem.Name = "helpToolStripMenuItem";
 		this.helpToolStripMenuItem.Size = new System.Drawing.Size(44, 20);
 		this.helpToolStripMenuItem.Text = "&Help";
-		this.contentsToolStripMenuItem.Name = "contentsToolStripMenuItem";
-		this.contentsToolStripMenuItem.Size = new System.Drawing.Size(122, 22);
-		this.contentsToolStripMenuItem.Text = "&Contents";
-		this.indexToolStripMenuItem.Name = "indexToolStripMenuItem";
-		this.indexToolStripMenuItem.Size = new System.Drawing.Size(122, 22);
-		this.indexToolStripMenuItem.Text = "&Index";
-		this.searchToolStripMenuItem.Name = "searchToolStripMenuItem";
-		this.searchToolStripMenuItem.Size = new System.Drawing.Size(122, 22);
-		this.searchToolStripMenuItem.Text = "&Search";
-		this.toolStripSeparator8.Name = "toolStripSeparator8";
-		this.toolStripSeparator8.Size = new System.Drawing.Size(119, 6);
 		this.aboutToolStripMenuItem.Name = "aboutToolStripMenuItem";
 		this.aboutToolStripMenuItem.Size = new System.Drawing.Size(122, 22);
 		this.aboutToolStripMenuItem.Text = "&About...";
