@@ -97,9 +97,12 @@ public class frmEditLanguage : Form
 
 	private void btnAdd_Click(object sender, EventArgs e)
 	{
-		if (cmbLang.Text == null || txtDLink.Text == null || txtFileName.Text == null)
+		// A text box is never null, so the old check here passed on empty fields and the blank URL
+		// then failed as an unreachable address, which read as the feature not working at all.
+		if (string.IsNullOrWhiteSpace(txtDLink.Text) || string.IsNullOrWhiteSpace(txtFileName.Text))
 		{
-			MessageBox.Show("You need to complete information", "Error", MessageBoxButtons.OK, MessageBoxIcon.Hand);
+			MessageBox.Show("Choose a language first, then fill in the download link and file name.",
+				"Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
 			return;
 		}
 

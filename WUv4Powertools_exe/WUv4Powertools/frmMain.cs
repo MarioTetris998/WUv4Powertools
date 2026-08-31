@@ -781,11 +781,10 @@ public class frmMain : Form
 		// block cannot be rewritten safely and is only ever reported.
 		int eulaFixed = list.RepairEulaEscaping();
 		int orphanIndex = list.RepairOrphanedIndexEntries();
-		int orphanStrings = list.RepairOrphanedStringIndex();
 		int coverageGaps;
 		string issues = list.ValidateProvider(out coverageGaps);
 
-		if (issues == null && rejoined == 0 && duplicates == 0 && eulaFixed == 0 && orphanIndex == 0 && orphanStrings == 0 && coverageGaps == 0)
+		if (issues == null && rejoined == 0 && duplicates == 0 && eulaFixed == 0 && orphanIndex == 0 && coverageGaps == 0)
 		{
 			MessageBox.Show("This provider is consistent. Nothing needed repairing.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
 			return;
@@ -807,10 +806,6 @@ public class frmMain : Form
 		if (orphanIndex > 0)
 		{
 			report += orphanIndex + " index entries pointing at a missing update were removed.\n";
-		}
-		if (orphanStrings > 0)
-		{
-			report += orphanStrings + " string entries pointing at a missing row were removed.\n";
 		}
 		if (issues != null)
 		{
@@ -1329,10 +1324,10 @@ public class frmMain : Form
 		this.tsContainer.Text = "toolStripContainer1";
 		this.tsContainer.TopToolStripPanel.Controls.Add(this.menuStrip1);
 		// A ToolStripPanel lays its strips out in the order they are added and overrides the
-		// designer Location values, so add order is what actually decides the layout. Search goes
-		// in first, the buttons follow it, and both sit at the left edge with no gap between.
-		this.tsContainer.TopToolStripPanel.Controls.Add(this.tbSearch);
+		// designer Location values, so add order is what decides the layout. The buttons go in
+		// first and the search box follows them.
 		this.tsContainer.TopToolStripPanel.Controls.Add(this.tbStandard);
+		this.tsContainer.TopToolStripPanel.Controls.Add(this.tbSearch);
 		this.mdiTabs.AutoSize = true;
 		this.mdiTabs.BackColor = System.Drawing.SystemColors.Control;
 		this.mdiTabs.Dock = System.Windows.Forms.DockStyle.Fill;
@@ -1372,7 +1367,9 @@ public class frmMain : Form
 		this.menuStrip1.Size = new System.Drawing.Size(179, 24);
 		this.menuStrip1.TabIndex = 17;
 		this.menuStrip1.Text = "menuStrip1";
-		this.menuStrip1.Visible = false;
+		// The menu bar carries the Tools commands, so it has to be on screen for them to be
+		// reachable at all.
+		this.menuStrip1.Visible = true;
 		this.fileToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[8] { this.openToolStripMenuItem, this.toolStripSeparator, this.saveToolStripMenuItem, this.toolStripSeparator1, this.printToolStripMenuItem, this.printPreviewToolStripMenuItem, this.toolStripSeparator3, this.exitToolStripMenuItem });
 		this.fileToolStripMenuItem.Name = "fileToolStripMenuItem";
 		this.fileToolStripMenuItem.Size = new System.Drawing.Size(37, 20);

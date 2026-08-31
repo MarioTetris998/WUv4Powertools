@@ -1096,7 +1096,6 @@ catch (Exception ex)
 		int duplicates = SanitizeProvider();
 		int eulaFixed = RepairEulaEscaping();
 		int orphanIndex = RepairOrphanedIndexEntries();
-		int orphanStrings = RepairOrphanedStringIndex();
 		List<string> stillBroken = FindCatalogBreakingRecords();
 
 		System.Text.StringBuilder sb = new System.Text.StringBuilder();
@@ -1104,7 +1103,6 @@ catch (Exception ex)
 		sb.AppendLine(duplicates + " duplicate lines were removed.");
 		sb.AppendLine(eulaFixed + " EULA links were escaped.");
 		sb.AppendLine(orphanIndex + " index entries pointing at a missing update were removed.");
-		sb.AppendLine(orphanStrings + " string entries pointing at a missing row were removed.");
 		if (stillBroken.Count > 0)
 		{
 			sb.AppendLine();
@@ -1305,7 +1303,10 @@ catch (Exception ex)
 
 		coverageGaps = danglingRefs;
 		List<string> catalogBreaking = FindCatalogBreakingRecords();
-		if (orphanIndexGuids == 0 && missingStringRows == 0 && catalogBreaking.Count == 0)
+		// missingStringRows is counted but deliberately not treated as damage. Titles and
+		// descriptions are routinely held for more languages than there are update files, so a
+		// string entry with nothing behind it is expected rather than broken.
+		if (orphanIndexGuids == 0 && catalogBreaking.Count == 0)
 		{
 			return null;
 		}
@@ -1323,7 +1324,6 @@ catch (Exception ex)
 			}
 		}
 		if (orphanIndexGuids > 0) sb.AppendLine(orphanIndexGuids + " itemsindex entries point at an update with no items.txt row, so the update resolves to nothing.");
-		if (missingStringRows > 0) sb.AppendLine(missingStringRows + " itemstringsindex entries point at an itemstrings row that does not exist, so the title and description are missing.");
 		return sb.ToString();
 	}
 
@@ -1398,8 +1398,11 @@ catch (Exception ex)
 		return dropped;
 	}
 
-	// Drops itemstringsindex lines pointing at an itemstrings row that does not exist. Such a line
-	// leaves an update with no title or description for that locale.
+	// Drops itemstringsindex lines pointing at an itemstrings row that does not exist.
+	//
+	// Deliberately NOT part of either repair. Titles and descriptions are routinely kept for more
+	// languages than there are update files, so an entry with nothing behind it is normal here and
+	// removing it would throw away work. Left available for a caller that genuinely wants it.
 	public int RepairOrphanedStringIndex()
 	{
 		if (l_itemstringsindex == null || l_itemstrings == null) return 0;

@@ -35,6 +35,17 @@ public class PlaceHolderTextBox : ToolStripTextBox
 		}
 		set
 		{
+			// Clearing the box from code has to bring the placeholder back, otherwise it is left
+			// simply blank. The control used to manage the placeholder on focus and blur alone, so
+			// anything that assigned an empty string wiped it until the box was clicked into twice.
+			if (string.IsNullOrEmpty(value) && !Focused)
+			{
+				isPlaceHolder = false;
+				base.Text = string.Empty;
+				setPlaceholder();
+				return;
+			}
+			removePlaceHolder();
 			base.Text = value;
 		}
 	}
@@ -43,10 +54,13 @@ public class PlaceHolderTextBox : ToolStripTextBox
 	{
 		if (string.IsNullOrEmpty(base.Text))
 		{
+			// Raise the flag first. Assigning the text fires TextChanged, and anything reading Text
+			// from that handler would otherwise be handed the placeholder itself rather than an
+			// empty string, which makes the search filter hide every row.
+			isPlaceHolder = true;
 			base.Text = PlaceHolderText;
 			ForeColor = Color.Gray;
 			Font = new Font(Font, FontStyle.Italic);
-			isPlaceHolder = true;
 		}
 	}
 
@@ -54,10 +68,12 @@ public class PlaceHolderTextBox : ToolStripTextBox
 	{
 		if (isPlaceHolder)
 		{
-			base.Text = "";
+			// Same ordering concern in reverse: clear the flag before the text changes, so a reader
+			// during TextChanged sees the real value.
+			isPlaceHolder = false;
+			base.Text = string.Empty;
 			ForeColor = SystemColors.WindowText;
 			Font = new Font(Font, FontStyle.Regular);
-			isPlaceHolder = false;
 		}
 	}
 
