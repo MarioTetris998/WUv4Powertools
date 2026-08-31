@@ -58,8 +58,17 @@ public class frmItemList : Form
 
 	// Call before anything that changes the dictionaries. Taking a new step forward discards the
 	// redo history, since redoing a change made before a different one no longer means anything.
+	public bool HasUnsavedChanges { get; private set; }
+
+	// Called once the provider has been written out, so the reload warning stops firing.
+	public void MarkSaved()
+	{
+		HasUnsavedChanges = false;
+	}
+
 	public void PushUndoState()
 	{
+		HasUnsavedChanges = true;
 		undoStates.Add(CaptureState());
 		if (undoStates.Count > MaxUndoDepth)
 		{
@@ -991,7 +1000,7 @@ catch (Exception ex)
 											var upd = (Update)item.Tag;
 											return groupPriority.ContainsKey(upd.group) ? groupPriority[upd.group] : 999;
 										 })
-									 .ThenByDescending(item => {
+									 .ThenBy(item => {
 										 Update upd = ((Update)item.Tag);
 										 // If custom order is set, use it; otherwise use original file position
 										 if (upd.customOrder != -1)

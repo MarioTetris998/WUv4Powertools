@@ -564,6 +564,7 @@ public class frmMain : Form
 				{
 					pbBusy.Style = ProgressBarStyle.Blocks;
 					string note = (duplicatesRemoved > 0) ? ("\n\n" + duplicatesRemoved + " duplicate lines were removed.") : "";
+					frmItemList2.MarkSaved();
 					MessageBox.Show("The provider files are updated correctly!" + note, "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
 				});
 			}
@@ -1028,7 +1029,15 @@ public class frmMain : Form
 
 	private void btnRefresh_Click(object sender, EventArgs e)
 	{
-		frmItemList obj = (frmItemList)mdiTabs.SelectedForm;
+		frmItemList obj = mdiTabs.SelectedForm as frmItemList;
+		if (obj == null) return;
+		// Reloading rebuilds the list from what is on disk, so anything not saved is lost.
+		if (obj.HasUnsavedChanges && MessageBox.Show(
+			"This provider has changes that have not been saved.\n\nReloading discards them. Continue?",
+			"Windows Update v4.0 PowerTools", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+		{
+			return;
+		}
 		obj.ReloadItems();
 	}
 

@@ -979,7 +979,7 @@ public class frmEditUpdate : Form
 		// wrapping is on, since wrapped text never extends past the right edge. No length cap.
 		this.txtDetection.Multiline = true;
 		this.txtDetection.MaxLength = 0;
-		this.txtDetection.ScrollBars = System.Windows.Forms.ScrollBars.None;
+		this.txtDetection.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
 		this.txtDetection.WordWrap = true;
 		this.txtDetection.Name = "txtDetection";
 		this.txtDetection.Size = new System.Drawing.Size(286, 100);

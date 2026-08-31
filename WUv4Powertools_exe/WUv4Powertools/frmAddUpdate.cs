@@ -2011,7 +2011,7 @@ public class frmAddUpdate : Form
 		// wrapping is on, since wrapped text never extends past the right edge. No length cap.
 		this.txtDetection.Multiline = true;
 		this.txtDetection.MaxLength = 0;
-		this.txtDetection.ScrollBars = System.Windows.Forms.ScrollBars.None;
+		this.txtDetection.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
 		this.txtDetection.WordWrap = true;
 		this.txtDetection.Name = "txtDetection";
 		this.txtDetection.Size = new System.Drawing.Size(413, 100);
@@ -2276,6 +2276,8 @@ public class frmAddUpdate : Form
 		this.numFraction.Name = "numFraction";
 		this.numFraction.Size = new System.Drawing.Size(56, 20);
 		this.numFraction.Maximum = new decimal(new int[] { 9999, 0, 0, 0 });
+		// Starts on a four digit value so the width of the field is obvious at a glance.
+		this.numFraction.Value = new decimal(new int[] { 5959, 0, 0, 0 });
 		((System.ComponentModel.ISupportInitialize)this.numFraction).EndInit();
 		this.cmbDate.Location = new System.Drawing.Point(214, 197);
 		this.cmbDate.Name = "cmbDate";
