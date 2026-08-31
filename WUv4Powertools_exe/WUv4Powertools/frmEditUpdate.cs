@@ -591,7 +591,9 @@ public class frmEditUpdate : Form
 			ListBox clb = new ListBox
 			{
 				Location = new System.Drawing.Point(10, 10),
-				Size = new System.Drawing.Size(340, 260)
+				Size = new System.Drawing.Size(340, 260),
+				// Update titles run long, so they can be scrolled sideways rather than cut off.
+				HorizontalScrollbar = true
 			};
 			foreach (string c in available) clb.Items.Add(TitleForCode(c));
 			dlg.Controls.Add(clb);
@@ -908,6 +910,7 @@ public class frmEditUpdate : Form
 		this.lblPrereqs.Name = "lblPrereqs";
 		this.lblPrereqs.Text = "Prerequisites:";
 		this.lstPrereqs.FormattingEnabled = true;
+		this.lstPrereqs.HorizontalScrollbar = true;
 		this.lstPrereqs.Location = new System.Drawing.Point(142, 216);
 		this.lstPrereqs.Name = "lstPrereqs";
 		this.lstPrereqs.Size = new System.Drawing.Size(200, 56);
@@ -941,13 +944,12 @@ public class frmEditUpdate : Form
 		this.advancedWizardPage3.SubTitleFont = new System.Drawing.Font("Tahoma", 8f);
 		this.advancedWizardPage3.TabIndex = 3;
 		this.txtDetection.Location = new System.Drawing.Point(142, 111);
-		// No length cap, and no word wrap. A multiline text box re-flows the whole buffer on every
-		// keystroke when wrapping is on, which is what made a long detection block crawl. Scrolling
-		// sideways instead keeps it responsive however much is pasted in.
+		// Wraps so the text fills the box, with no scroll bars. A horizontal bar cannot show while
+		// wrapping is on, since wrapped text never extends past the right edge. No length cap.
 		this.txtDetection.Multiline = true;
 		this.txtDetection.MaxLength = 0;
-		this.txtDetection.ScrollBars = System.Windows.Forms.ScrollBars.Both;
-		this.txtDetection.WordWrap = false;
+		this.txtDetection.ScrollBars = System.Windows.Forms.ScrollBars.None;
+		this.txtDetection.WordWrap = true;
 		this.txtDetection.Name = "txtDetection";
 		this.txtDetection.Size = new System.Drawing.Size(286, 100);
 		this.txtDetection.TabIndex = 11;

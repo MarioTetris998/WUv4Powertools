@@ -2003,13 +2003,12 @@ public class frmAddUpdate : Form
 		// lined up with the download group box, which made it unreadable and unusable. It now runs
 		// the full width below both columns, where there is free space.
 		this.txtDetection.Location = new System.Drawing.Point(15, 304);
-		// No length cap, and no word wrap. A multiline text box re-flows the whole buffer on every
-		// keystroke when wrapping is on, which is what made a long detection block crawl. Scrolling
-		// sideways instead keeps it responsive however much is pasted in.
+		// Wraps so the text fills the box, with no scroll bars. A horizontal bar cannot show while
+		// wrapping is on, since wrapped text never extends past the right edge. No length cap.
 		this.txtDetection.Multiline = true;
 		this.txtDetection.MaxLength = 0;
-		this.txtDetection.ScrollBars = System.Windows.Forms.ScrollBars.Both;
-		this.txtDetection.WordWrap = false;
+		this.txtDetection.ScrollBars = System.Windows.Forms.ScrollBars.None;
+		this.txtDetection.WordWrap = true;
 		this.txtDetection.Name = "txtDetection";
 		this.txtDetection.Size = new System.Drawing.Size(413, 100);
 		this.txtDetection.TabIndex = 10;
