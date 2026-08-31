@@ -109,6 +109,12 @@ public class frmEditUpdate : Form
 
 	private DateTimePicker cmbDate;
 
+	private DateTimePicker dtpTime;
+
+	private NumericUpDown numFraction;
+
+	private Label lblTimeDot;
+
 	private Label lblLanguage;
 
 	private Label lblHelp1;
@@ -150,8 +156,26 @@ public class frmEditUpdate : Form
 		txtDetection.Text = line_split[4];
 		XmlDocument installation = new XmlDocument();
 		installation.Load(new MemoryStream(Encoding.UTF8.GetBytes(line_split[5])));
-		DateTime myDate = DateTime.ParseExact(line_split[9].Split('T')[0], "yyyy-MM-dd", CultureInfo.InvariantCulture);
-		cmbDate.Value = myDate;
+		// The whole stamp is read back, not just the date. Reading only the date and then writing a
+		// full stamp on save quietly reset every edited update to midnight.
+		DateTime myDate;
+		int fraction = 0;
+		string stamp = line_split[9];
+		if (!DateTime.TryParseExact(stamp, "yyyy-MM-ddTHH:mm:ss.ffff", CultureInfo.InvariantCulture, DateTimeStyles.None, out myDate))
+		{
+			if (!DateTime.TryParseExact(stamp, "yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture, DateTimeStyles.None, out myDate))
+			{
+				myDate = DateTime.ParseExact(stamp.Split('T')[0], "yyyy-MM-dd", CultureInfo.InvariantCulture);
+			}
+		}
+		int dot = stamp.LastIndexOf('.');
+		if (dot > 0)
+		{
+			int.TryParse(stamp.Substring(dot + 1), out fraction);
+		}
+		cmbDate.Value = myDate.Date;
+		dtpTime.Value = myDate;
+		numFraction.Value = Math.Min(9999, Math.Max(0, fraction));
 		
 		// Fix: Add null check for switches element
 		var switchesElements = installation.GetElementsByTagName("switches");
@@ -340,6 +364,10 @@ public class frmEditUpdate : Form
 			bool _chkExclusive = chkExclusive.Checked;
 			bool _chkRebootReq = chkRebootReq.Checked;
 			DateTime _cmbDateValue = cmbDate.Value;
+			DateTime _timeValue = dtpTime.Value;
+			string _stamp = new DateTime(_cmbDateValue.Year, _cmbDateValue.Month, _cmbDateValue.Day,
+				_timeValue.Hour, _timeValue.Minute, _timeValue.Second)
+				.ToString("yyyy-MM-ddTHH:mm:ss") + "." + ((int)numFraction.Value).ToString("0000");
 			string _txtArguments = txtArguments.Text;
 			string _txtDetection = txtDetection.Text;
 
@@ -365,7 +393,7 @@ public class frmEditUpdate : Form
 					string[] array = upd.itemlines[i].Split(new string[1] { "@|" }, StringSplitOptions.None);
 					array[3] = _cmbGroup;
 					array[7] = (_chkCritical ? "3" : "4");
-					array[9] = _cmbDateValue.ToString("yyyy-MM-ddTHH:mm:ss.ffff");
+					array[9] = _stamp;
 					array[10] = (_chkExclusive ? "1" : "0");
 					array[4] = _txtDetection;
 					XmlDocument xmlDocument = new XmlDocument();
@@ -852,6 +880,9 @@ public class frmEditUpdate : Form
 		this.lblArguments = new System.Windows.Forms.Label();
 		this.advancedWizardPage2 = new AdvancedWizardControl.WizardPages.AdvancedWizardPage();
 		this.cmbDate = new System.Windows.Forms.DateTimePicker();
+		this.dtpTime = new System.Windows.Forms.DateTimePicker();
+		this.numFraction = new System.Windows.Forms.NumericUpDown();
+		this.lblTimeDot = new System.Windows.Forms.Label();
 		this.lblLanguage = new System.Windows.Forms.Label();
 		this.chkRebootReq = new System.Windows.Forms.CheckBox();
 		this.chkEULARequired = new System.Windows.Forms.CheckBox();
@@ -972,6 +1003,9 @@ public class frmEditUpdate : Form
 		this.lblArguments.Text = "Arguments:";
 		this.advancedWizardPage2.Controls.Add(this.lblHelp1);
 		this.advancedWizardPage2.Controls.Add(this.cmbDate);
+		this.advancedWizardPage2.Controls.Add(this.dtpTime);
+		this.advancedWizardPage2.Controls.Add(this.lblTimeDot);
+		this.advancedWizardPage2.Controls.Add(this.numFraction);
 		this.advancedWizardPage2.Controls.Add(this.lblLanguage);
 		this.advancedWizardPage2.Controls.Add(this.chkRebootReq);
 		this.advancedWizardPage2.Controls.Add(this.chkEULARequired);
@@ -996,9 +1030,26 @@ public class frmEditUpdate : Form
 		this.advancedWizardPage2.SubTitleFont = new System.Drawing.Font("Tahoma", 8f);
 		this.advancedWizardPage2.TabIndex = 2;
 		this.cmbDate.Format = System.Windows.Forms.DateTimePickerFormat.Short;
-		this.cmbDate.Location = new System.Drawing.Point(338, 163);
+		// Date, then a spinner for the time, then the four digit fraction that ends the stamp.
+		this.cmbDate.Location = new System.Drawing.Point(180, 163);
 		this.cmbDate.Name = "cmbDate";
-		this.cmbDate.Size = new System.Drawing.Size(90, 20);
+		this.cmbDate.Size = new System.Drawing.Size(95, 20);
+		this.dtpTime.Format = System.Windows.Forms.DateTimePickerFormat.Custom;
+		this.dtpTime.CustomFormat = "HH:mm:ss";
+		this.dtpTime.ShowUpDown = true;
+		this.dtpTime.Location = new System.Drawing.Point(281, 163);
+		this.dtpTime.Name = "dtpTime";
+		this.dtpTime.Size = new System.Drawing.Size(80, 20);
+		this.lblTimeDot.AutoSize = true;
+		this.lblTimeDot.Location = new System.Drawing.Point(363, 167);
+		this.lblTimeDot.Name = "lblTimeDot";
+		this.lblTimeDot.Text = ".";
+		((System.ComponentModel.ISupportInitialize)this.numFraction).BeginInit();
+		this.numFraction.Location = new System.Drawing.Point(372, 163);
+		this.numFraction.Name = "numFraction";
+		this.numFraction.Size = new System.Drawing.Size(56, 20);
+		this.numFraction.Maximum = new decimal(new int[] { 9999, 0, 0, 0 });
+		((System.ComponentModel.ISupportInitialize)this.numFraction).EndInit();
 		this.cmbDate.TabIndex = 17;
 		this.lblLanguage.AutoSize = true;
 		this.lblLanguage.Location = new System.Drawing.Point(23, 170);

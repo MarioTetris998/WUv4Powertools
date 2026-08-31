@@ -161,10 +161,12 @@ public class frmAddUpdate : Form
 	private DateTimePicker cmbDate;
 	
 	// Time controls for precise timestamp
-	private NumericUpDown numHours;
-	private NumericUpDown numMinutes;
-	private NumericUpDown numSeconds;
-	private NumericUpDown numMilliseconds;
+	private DateTimePicker dtpTime;
+
+	private NumericUpDown numFraction;
+
+	private Label lblTimeDot;
+
 	private Label lblTime;
 
 	private RadioButton radCustomEULA;
@@ -883,10 +885,11 @@ public class frmAddUpdate : Form
 		bool _radNewEULA = radNewEULA.Checked;
 		bool _radCustomEULA = radCustomEULA.Checked;
 		DateTime _cmbDateValue = cmbDate.Value;
-		int _hours = (int)numHours.Value;
-		int _minutes = (int)numMinutes.Value;
-		int _seconds = (int)numSeconds.Value;
-		int _milliseconds = (int)numMilliseconds.Value;
+		DateTime _timeValue = dtpTime.Value;
+		int _hours = _timeValue.Hour;
+		int _minutes = _timeValue.Minute;
+		int _seconds = _timeValue.Second;
+		int _fraction = (int)numFraction.Value;
 		
 		// Capture IE update specific values
 		bool _isIEUpdate = isIEUpdate;
@@ -900,9 +903,11 @@ public class frmAddUpdate : Form
 			_cmbDateValue.Day,
 			_hours,
 			_minutes,
-			_seconds,
-			_milliseconds
+			_seconds
 		);
+		// The fraction is four digits and is appended as text. A millisecond value could only ever
+		// fill three of them, leaving the last digit stuck at zero.
+		string _stamp = _fullDateTime.ToString("yyyy-MM-ddTHH:mm:ss") + "." + _fraction.ToString("0000");
 		
 		// Feature 3: Capture installer and command type values
 		string _installerType = (cmbInstallerType != null && cmbInstallerType.SelectedItem != null) 
@@ -1344,7 +1349,7 @@ public class frmAddUpdate : Form
 				}
 				int num4 = (Convert.ToInt16(!_chkCritical) + 1) * 2;
 				// Format timestamp with full precision: YYYY-MM-DDTHH:MM:SS.FFFF
-				string text3 = _fullDateTime.ToString("yyyy-MM-ddTHH:mm:ss.ffff");
+				string text3 = _stamp;
 				
 				// Validate download link before trying to use it
 				if (string.IsNullOrWhiteSpace(_txtDLink))
@@ -1779,10 +1784,9 @@ public class frmAddUpdate : Form
 		this.chkCritical = new System.Windows.Forms.CheckBox();
 		this.advancedWizardPage1 = new AdvancedWizardControl.WizardPages.AdvancedWizardPage();
 		this.cmbDate = new System.Windows.Forms.DateTimePicker();
-		this.numHours = new System.Windows.Forms.NumericUpDown();
-		this.numMinutes = new System.Windows.Forms.NumericUpDown();
-		this.numSeconds = new System.Windows.Forms.NumericUpDown();
-		this.numMilliseconds = new System.Windows.Forms.NumericUpDown();
+		this.dtpTime = new System.Windows.Forms.DateTimePicker();
+		this.numFraction = new System.Windows.Forms.NumericUpDown();
+		this.lblTimeDot = new System.Windows.Forms.Label();
 		this.lblTime = new System.Windows.Forms.Label();
 		this.cmbLang = new System.Windows.Forms.ComboBox();
 		this.txtUpdCode = new System.Windows.Forms.TextBox();
@@ -2170,11 +2174,10 @@ public class frmAddUpdate : Form
 		this.chkCritical.UseVisualStyleBackColor = true;
 		this.chkCritical.CheckedChanged += new System.EventHandler(chkCritical_CheckedChanged);
 		this.advancedWizardPage1.Controls.Add(this.cmbDate);
+		this.advancedWizardPage1.Controls.Add(this.dtpTime);
+		this.advancedWizardPage1.Controls.Add(this.lblTimeDot);
+		this.advancedWizardPage1.Controls.Add(this.numFraction);
 		this.advancedWizardPage1.Controls.Add(this.lblTime);
-		this.advancedWizardPage1.Controls.Add(this.numHours);
-		this.advancedWizardPage1.Controls.Add(this.numMinutes);
-		this.advancedWizardPage1.Controls.Add(this.numSeconds);
-		this.advancedWizardPage1.Controls.Add(this.numMilliseconds);
 		this.advancedWizardPage1.Controls.Add(this.cmbLang);
 		this.advancedWizardPage1.Controls.Add(this.txtUpdCode);
 		this.advancedWizardPage1.Controls.Add(this.lblFileCode);
@@ -2257,7 +2260,24 @@ public class frmAddUpdate : Form
 		this.cmbLang.TabIndex = 4;
 		// Date and Time - ALL ON ONE LINE
 		this.cmbDate.Format = System.Windows.Forms.DateTimePickerFormat.Short;
-		this.cmbDate.Location = new System.Drawing.Point(220, 197);
+		// Date, a spinner for the time, then the four digit fraction that ends the stamp.
+		this.dtpTime.Format = System.Windows.Forms.DateTimePickerFormat.Custom;
+		this.dtpTime.CustomFormat = "HH:mm:ss";
+		this.dtpTime.ShowUpDown = true;
+		this.dtpTime.Location = new System.Drawing.Point(334, 197);
+		this.dtpTime.Name = "dtpTime";
+		this.dtpTime.Size = new System.Drawing.Size(80, 20);
+		this.lblTimeDot.AutoSize = true;
+		this.lblTimeDot.Location = new System.Drawing.Point(416, 201);
+		this.lblTimeDot.Name = "lblTimeDot";
+		this.lblTimeDot.Text = ".";
+		((System.ComponentModel.ISupportInitialize)this.numFraction).BeginInit();
+		this.numFraction.Location = new System.Drawing.Point(424, 197);
+		this.numFraction.Name = "numFraction";
+		this.numFraction.Size = new System.Drawing.Size(56, 20);
+		this.numFraction.Maximum = new decimal(new int[] { 9999, 0, 0, 0 });
+		((System.ComponentModel.ISupportInitialize)this.numFraction).EndInit();
+		this.cmbDate.Location = new System.Drawing.Point(214, 197);
 		this.cmbDate.Name = "cmbDate";
 		this.cmbDate.Size = new System.Drawing.Size(90, 20);
 		this.cmbDate.TabIndex = 5;
@@ -2270,14 +2290,6 @@ public class frmAddUpdate : Form
 		this.lblTime.Text = "@";
 		this.lblTime.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
 		// Hours
-		((System.ComponentModel.ISupportInitialize)this.numHours).BeginInit();
-		this.numHours.Location = new System.Drawing.Point(333, 197);
-		this.numHours.Maximum = new decimal(new int[] { 23, 0, 0, 0 });
-		this.numHours.Name = "numHours";
-		this.numHours.Size = new System.Drawing.Size(28, 20);
-		this.numHours.TabIndex = 6;
-		this.numHours.Value = new decimal(new int[] { 0, 0, 0, 0 });
-		((System.ComponentModel.ISupportInitialize)this.numHours).EndInit();
 		// Colon 1
 		Label lblColon1 = new Label();
 		lblColon1.AutoSize = false;
@@ -2287,14 +2299,6 @@ public class frmAddUpdate : Form
 		lblColon1.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
 		this.advancedWizardPage1.Controls.Add(lblColon1);
 		// Minutes
-		((System.ComponentModel.ISupportInitialize)this.numMinutes).BeginInit();
-		this.numMinutes.Location = new System.Drawing.Point(367, 197);
-		this.numMinutes.Maximum = new decimal(new int[] { 59, 0, 0, 0 });
-		this.numMinutes.Name = "numMinutes";
-		this.numMinutes.Size = new System.Drawing.Size(28, 20);
-		this.numMinutes.TabIndex = 7;
-		this.numMinutes.Value = new decimal(new int[] { 0, 0, 0, 0 });
-		((System.ComponentModel.ISupportInitialize)this.numMinutes).EndInit();
 		// Colon 2
 		Label lblColon2 = new Label();
 		lblColon2.AutoSize = false;
@@ -2304,14 +2308,6 @@ public class frmAddUpdate : Form
 		lblColon2.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
 		this.advancedWizardPage1.Controls.Add(lblColon2);
 		// Seconds
-		((System.ComponentModel.ISupportInitialize)this.numSeconds).BeginInit();
-		this.numSeconds.Location = new System.Drawing.Point(401, 197);
-		this.numSeconds.Maximum = new decimal(new int[] { 59, 0, 0, 0 });
-		this.numSeconds.Name = "numSeconds";
-		this.numSeconds.Size = new System.Drawing.Size(28, 20);
-		this.numSeconds.TabIndex = 8;
-		this.numSeconds.Value = new decimal(new int[] { 0, 0, 0, 0 });
-		((System.ComponentModel.ISupportInitialize)this.numSeconds).EndInit();
 		// OS and Service Pack
 		this.lblServicePack.AutoSize = true;
 		this.lblServicePack.Location = new System.Drawing.Point(20, 230);

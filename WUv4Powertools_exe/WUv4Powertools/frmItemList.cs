@@ -843,19 +843,25 @@ catch (Exception ex)
 			}
 		}
 
-		int clamped = Math.Min(target, lstItems.Items.Count);
-		ListViewItem landing = (clamped < lstItems.Items.Count) ? lstItems.Items[clamped] : null;
-		while (landing != null && draggedItems.Contains(landing))
+		// Find where this category sits in the list, so a drop can be clamped inside it. Dropping at
+		// the bottom of a category otherwise points at the next category's first row, which used to
+		// be refused outright and made reordering look broken.
+		int groupFirst = -1;
+		int groupLast = -1;
+		for (int i = 0; i < lstItems.Items.Count; i++)
 		{
-			clamped++;
-			landing = (clamped < lstItems.Items.Count) ? lstItems.Items[clamped] : null;
+			Update row = lstItems.Items[i].Tag as Update;
+			if (row == null || row.group != groupId) continue;
+			if (groupFirst < 0) groupFirst = i;
+			groupLast = i;
 		}
-		Update landingUpdate = (landing != null) ? landing.Tag as Update : null;
-		if (landingUpdate != null && landingUpdate.group != groupId)
+		if (groupFirst < 0) return;
+
+		int insertAt = Math.Max(groupFirst, Math.Min(target, groupLast + 1));
+		// Dragged rows sitting above the insertion point shift it up once they are taken out.
+		foreach (ListViewItem row in draggedItems)
 		{
-			MessageBox.Show("Updates can only be reordered within their own category.",
-				"Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-			return;
+			if (row.Index < insertAt) insertAt--;
 		}
 
 		// Reordering is an edit like any other, so capture the state first and write the new order
@@ -877,7 +883,8 @@ catch (Exception ex)
 			{
 				lstItems.Items.Remove(row);
 			}
-			int insertAt = (landing != null) ? landing.Index : lstItems.Items.Count;
+			if (insertAt < 0) insertAt = 0;
+			if (insertAt > lstItems.Items.Count) insertAt = lstItems.Items.Count;
 			for (int i = 0; i < draggedItems.Count; i++)
 			{
 				lstItems.Items.Insert(insertAt + i, draggedItems[i]);
