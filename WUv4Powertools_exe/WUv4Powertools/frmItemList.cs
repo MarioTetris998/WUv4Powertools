@@ -179,6 +179,8 @@ public class frmItemList : Form
 
 	private ColumnHeader colUpdGroup;
 
+	private ColumnHeader colUpdPrereqs;
+
 	private ColumnHeader colUpdExclusive;
 
 	public WindowsFormsAero.ListView lstItems;
@@ -466,6 +468,7 @@ public class frmItemList : Form
 				listViewItem.ImageIndex = 1;
 			}
 			listViewItem.SubItems.Add(_line);
+			listViewItem.SubItems.Add(HasPrerequisites(update.code).ToString());
 			listViewItem.SubItems.Add(num.ToString());
 			listViewItem.SubItems.Add(update.critical.ToString());
 			listViewItem.SubItems.Add(update.exclusive.ToString());
@@ -536,18 +539,26 @@ catch (Exception ex)
 		ToolStripMenuItem pasteItem = new ToolStripMenuItem("Paste");
 		pasteItem.ShortcutKeyDisplayString = "Ctrl+V";
 		pasteItem.Click += delegate { frmMain.PasteUpdates(); };
+		ToolStripMenuItem deleteItem = new ToolStripMenuItem("Delete");
+		deleteItem.Click += delegate { frmMain.DeleteSelectedUpdates(); };
 		ToolStripMenuItem repairItem = new ToolStripMenuItem("Validate and Repair Provider");
 		repairItem.Click += delegate { frmMain.repairProviderToolStripMenuItem_Click(null, EventArgs.Empty); };
 		ToolStripMenuItem restoreItem = new ToolStripMenuItem("Undo Last Save");
 		restoreItem.Click += delegate { frmMain.restoreBackupToolStripMenuItem_Click(null, EventArgs.Empty); };
 		menu.Items.Add(copyItem);
 		menu.Items.Add(pasteItem);
+		menu.Items.Add(deleteItem);
 		menu.Items.Add(new ToolStripSeparator());
 		menu.Items.Add(repairItem);
 		menu.Items.Add(restoreItem);
 		menu.Opening += delegate
 		{
 			copyItem.Enabled = lstItems.SelectedItems.Count > 0;
+			// Reads as Delete for one update and names the count for several.
+			deleteItem.Enabled = lstItems.SelectedItems.Count > 0;
+			deleteItem.Text = (lstItems.SelectedItems.Count > 1)
+				? ("Delete " + lstItems.SelectedItems.Count + " Updates")
+				: "Delete";
 			pasteItem.Enabled = UpdateClipboard.HasContent
 				&& !string.Equals(UpdateClipboard.SourceProvider, provider, StringComparison.OrdinalIgnoreCase);
 		};
@@ -638,6 +649,104 @@ catch (Exception ex)
 	}
 
 	// Drag-drop event handlers
+	// Removes every trace of the given updates from all five files in a single pass. The delete
+	// button handled one update at a time, so deleting a selection meant repeating it per update.
+	// Returns how many were removed.
+	public int RemoveUpdates(List<Update> updates)
+	{
+		if (updates == null || updates.Count == 0) return 0;
+		HashSet<string> codes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (Update upd in updates)
+		{
+			if (upd != null && !string.IsNullOrEmpty(upd.code)) codes.Add(upd.code);
+		}
+		if (codes.Count == 0) return 0;
+
+		HashSet<string> itemGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		HashSet<string> langGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		HashSet<string> itemIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		HashSet<string> stringSetGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+		for (int i = 0; i < l_items.Length; i++)
+		{
+			if (string.IsNullOrEmpty(l_items[i])) continue;
+			string[] parts = l_items[i].Split(FieldSeparator, StringSplitOptions.None);
+			string[] head = parts[0].Split(',');
+			if (head.Length < 2 || !codes.Contains(head[1])) continue;
+			itemGuids.Add(head[0]);
+			if (parts.Length > 2) langGuids.Add(parts[2]);
+			l_items[i] = null;
+		}
+
+		for (int i = 0; i < l_itemsindex.Length; i++)
+		{
+			if (string.IsNullOrEmpty(l_itemsindex[i])) continue;
+			string guid = IndexGuid(l_itemsindex[i]);
+			if (!itemGuids.Contains(guid)) continue;
+			string itemId = IndexItemId(l_itemsindex[i]);
+			if (itemId.StartsWith(provider + ".", StringComparison.OrdinalIgnoreCase))
+			{
+				itemId = itemId.Substring(provider.Length + 1);
+			}
+			itemIds.Add(itemId);
+			l_itemsindex[i] = null;
+		}
+
+		for (int i = 0; i < l_product2items.Length; i++)
+		{
+			if (string.IsNullOrEmpty(l_product2items[i])) continue;
+			string[] refs = l_product2items[i].Split(',');
+			List<string> keep = new List<string>(refs.Length);
+			keep.Add(refs[0]);
+			for (int j = 1; j < refs.Length; j++)
+			{
+				if (refs[j].Length > 0 && !itemIds.Contains(refs[j])) keep.Add(refs[j]);
+			}
+			l_product2items[i] = string.Join(",", keep);
+		}
+
+		for (int i = 0; i < l_itemstringsindex.Length; i++)
+		{
+			if (string.IsNullOrEmpty(l_itemstringsindex[i])) continue;
+			string[] key = l_itemstringsindex[i].Split(',');
+			string[] bits = key[0].Split('.');
+			if (bits.Length < 3 || !langGuids.Contains(bits[2])) continue;
+			if (key.Length > 1) stringSetGuids.Add(key[1]);
+			l_itemstringsindex[i] = null;
+		}
+
+		for (int i = 0; i < l_itemstrings.Length; i++)
+		{
+			if (string.IsNullOrEmpty(l_itemstrings[i])) continue;
+			string key = l_itemstrings[i].Split(',')[0];
+			int dot = key.LastIndexOf('.');
+			if (dot < 0) continue;
+			if (stringSetGuids.Contains(key.Substring(dot + 1))) l_itemstrings[i] = null;
+		}
+
+		l_items = l_items.Where(x => !string.IsNullOrEmpty(x)).ToArray();
+		l_itemsindex = l_itemsindex.Where(x => !string.IsNullOrEmpty(x)).ToArray();
+		l_itemstringsindex = l_itemstringsindex.Where(x => !string.IsNullOrEmpty(x)).ToArray();
+		l_itemstrings = l_itemstrings.Where(x => !string.IsNullOrEmpty(x)).ToArray();
+		return codes.Count;
+	}
+
+	// Prerequisites are stored after the @| separator on an itemsindex line. An update has them if
+	// any of its lines carries something there.
+	private bool HasPrerequisites(string code)
+	{
+		if (string.IsNullOrEmpty(code) || l_itemsindex == null) return false;
+		string token = "com_microsoft." + code + ".";
+		foreach (string line in l_itemsindex)
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+			if (line.IndexOf(token, StringComparison.OrdinalIgnoreCase) < 0) continue;
+			int at = line.IndexOf("@|", StringComparison.Ordinal);
+			if (at >= 0 && line.Substring(at + 2).Trim().Length > 0) return true;
+		}
+		return false;
+	}
+
 	private void CreateDropIndicator()
 	{
 		if (dropIndicator != null) return;
@@ -1660,7 +1769,11 @@ catch (Exception ex)
 		this.panelRight.SuspendLayout();
 		base.SuspendLayout();
 		this.lstItems.BorderStyle = System.Windows.Forms.BorderStyle.None;
-		this.lstItems.Columns.AddRange(new System.Windows.Forms.ColumnHeader[6] { this.colUpdName, this.colUpdCode, this.colLangCount, this.colUpdCritical, this.colUpdExclusive, this.colUpdGroup });
+		this.colUpdPrereqs = new System.Windows.Forms.ColumnHeader();
+		this.colUpdPrereqs.Text = "Prerequisites";
+		this.colUpdPrereqs.Width = 85;
+		this.colUpdPrereqs.TextAlign = System.Windows.Forms.HorizontalAlignment.Center;
+		this.lstItems.Columns.AddRange(new System.Windows.Forms.ColumnHeader[7] { this.colUpdName, this.colUpdCode, this.colUpdPrereqs, this.colLangCount, this.colUpdCritical, this.colUpdExclusive, this.colUpdGroup });
 		this.lstItems.Dock = System.Windows.Forms.DockStyle.Fill;
 		this.lstItems.FullRowSelect = true;
 		this.lstItems.HideSelection = false;
@@ -1687,7 +1800,8 @@ catch (Exception ex)
 		this.colUpdExclusive.Text = "Exclusive";
 		this.colUpdExclusive.TextAlign = System.Windows.Forms.HorizontalAlignment.Center;
 		this.colUpdGroup.Text = "Group";
-		this.colUpdGroup.Width = 100;
+		this.colUpdGroup.Width = 60;
+		this.colUpdGroup.TextAlign = System.Windows.Forms.HorizontalAlignment.Center;
 		this.imgLst.ImageStream = (System.Windows.Forms.ImageListStreamer)resources.GetObject("imgLst.ImageStream");
 		this.imgLst.TransparentColor = System.Drawing.Color.Transparent;
 		this.imgLst.Images.SetKeyName(0, "red_orb.ico");

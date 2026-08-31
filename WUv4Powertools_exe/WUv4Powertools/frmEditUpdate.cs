@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
@@ -502,7 +502,9 @@ public class frmEditUpdate : Form
 	{
 		if (lstPrereqs == null) return;
 		lstPrereqs.Items.Clear();
-		foreach (string c in prereqCodes) lstPrereqs.Items.Add(c);
+		foreach (string c in prereqCodes) lstPrereqs.Items.Add(TitleForCode(c));
+		// One prerequisite is the limit, so there is nothing to add once one is chosen.
+		if (btnAddPrereq != null) btnAddPrereq.Enabled = prereqCodes.Count == 0;
 	}
 
 	private void btnAddPrereq_Click(object sender, EventArgs e)
@@ -529,27 +531,54 @@ public class frmEditUpdate : Form
 			MessageBox.Show("No other updates are available in this provider to use as prerequisites.", "Add Prerequisite", MessageBoxButtons.OK, MessageBoxIcon.Information);
 			return;
 		}
+		if (prereqCodes.Count > 0)
+		{
+			MessageBox.Show("An update can only have one prerequisite. Remove the current one first.",
+				"Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			return;
+		}
 		foreach (string c in ShowPrereqPicker(available))
 		{
 			if (!prereqCodes.Contains(c)) prereqCodes.Add(c);
+			break;
 		}
 		RefreshPrereqList();
 	}
 
 	private void btnRemovePrereq_Click(object sender, EventArgs e)
 	{
-		if (lstPrereqs.SelectedItem == null) return;
-		prereqCodes.Remove(lstPrereqs.SelectedItem.ToString());
+		int chosen = lstPrereqs.SelectedIndex;
+		if (chosen < 0 || chosen >= prereqCodes.Count) return;
+		prereqCodes.RemoveAt(chosen);
 		RefreshPrereqList();
 	}
 
 	// Simple modal multi-select picker built in code (no separate designer file needed).
+	// The update title as shown in the main list. Falls back to the code when the update is not
+	// loaded, so something recognisable is always displayed.
+	private string TitleForCode(string code)
+	{
+		if (string.IsNullOrEmpty(code)) return code;
+		if (frmItemList != null && frmItemList.lstItemCol != null)
+		{
+			foreach (ListViewItem row in frmItemList.lstItemCol)
+			{
+				Update other = row.Tag as Update;
+				if (other != null && string.Equals(other.code, code, StringComparison.OrdinalIgnoreCase))
+				{
+					return string.IsNullOrEmpty(row.Text) ? code : row.Text;
+				}
+			}
+		}
+		return code;
+	}
+
 	private List<string> ShowPrereqPicker(List<string> available)
 	{
 		List<string> result = new List<string>();
 		using (Form dlg = new Form())
 		{
-			dlg.Text = "Select Prerequisite(s)";
+			dlg.Text = "Select Prerequisite";
 			dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
 			dlg.StartPosition = FormStartPosition.CenterParent;
 			dlg.MinimizeBox = false;
@@ -557,13 +586,14 @@ public class frmEditUpdate : Form
 			dlg.ShowIcon = false;
 			dlg.ShowInTaskbar = false;
 			dlg.ClientSize = new System.Drawing.Size(360, 320);
-			CheckedListBox clb = new CheckedListBox
+			// A plain list, because only one prerequisite is allowed. Titles are shown, and the code
+			// each one belongs to is kept alongside so the right value comes back.
+			ListBox clb = new ListBox
 			{
 				Location = new System.Drawing.Point(10, 10),
-				Size = new System.Drawing.Size(340, 260),
-				CheckOnClick = true
+				Size = new System.Drawing.Size(340, 260)
 			};
-			foreach (string c in available) clb.Items.Add(c);
+			foreach (string c in available) clb.Items.Add(TitleForCode(c));
 			dlg.Controls.Add(clb);
 			Button ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new System.Drawing.Point(194, 282), Size = new System.Drawing.Size(75, 25) };
 			Button cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new System.Drawing.Point(275, 282), Size = new System.Drawing.Size(75, 25) };
@@ -573,7 +603,10 @@ public class frmEditUpdate : Form
 			dlg.CancelButton = cancel;
 			if (dlg.ShowDialog(this) == DialogResult.OK)
 			{
-				foreach (object it in clb.CheckedItems) result.Add(it.ToString());
+				if (clb.SelectedIndex >= 0 && clb.SelectedIndex < available.Count)
+				{
+					result.Add(available[clb.SelectedIndex]);
+				}
 			}
 		}
 		return result;
@@ -908,7 +941,13 @@ public class frmEditUpdate : Form
 		this.advancedWizardPage3.SubTitleFont = new System.Drawing.Font("Tahoma", 8f);
 		this.advancedWizardPage3.TabIndex = 3;
 		this.txtDetection.Location = new System.Drawing.Point(142, 111);
+		// No length cap, and no word wrap. A multiline text box re-flows the whole buffer on every
+		// keystroke when wrapping is on, which is what made a long detection block crawl. Scrolling
+		// sideways instead keeps it responsive however much is pasted in.
 		this.txtDetection.Multiline = true;
+		this.txtDetection.MaxLength = 0;
+		this.txtDetection.ScrollBars = System.Windows.Forms.ScrollBars.Both;
+		this.txtDetection.WordWrap = false;
 		this.txtDetection.Name = "txtDetection";
 		this.txtDetection.Size = new System.Drawing.Size(286, 100);
 		this.txtDetection.TabIndex = 11;

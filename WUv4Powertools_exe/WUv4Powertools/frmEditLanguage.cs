@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
@@ -53,6 +53,8 @@ public class frmEditLanguage : Form
 
 	private CheckBox chkAllLanguages;
 
+	private Label lblSharedUrl;
+
 	public frmEditLanguage(frmItemList frmItemList, frmMain frmMain, Update upd)
 	{
 		this.upd = upd;
@@ -92,6 +94,55 @@ public class frmEditLanguage : Form
 			{
 				cmbLang.Items.Add(lang2);
 			}
+		}
+		ShowSharedUrlNotice();
+	}
+
+	// Says so when every language of this update already points at the same file, which is otherwise
+	// invisible: the dialog shows one language at a time and they would all simply look the same.
+	private void ShowSharedUrlNotice()
+	{
+		if (lblSharedUrl == null) return;
+		lblSharedUrl.Text = string.Empty;
+		if (uLangs == null || uLangs.Count < 2) return;
+
+		string shared = null;
+		int counted = 0;
+		foreach (UpdEdit upe in uLangs)
+		{
+			string href = HrefOf(upe.updItem);
+			if (href == null) continue;
+			counted++;
+			if (shared == null)
+			{
+				shared = href;
+			}
+			else if (!string.Equals(shared, href, StringComparison.OrdinalIgnoreCase))
+			{
+				return;
+			}
+		}
+		if (counted < 2) return;
+		lblSharedUrl.Text = "All " + counted + " languages use this one URL.";
+	}
+
+	// The codeBase href out of an items.txt line, or null when it cannot be read.
+	private static string HrefOf(string itemLine)
+	{
+		if (string.IsNullOrEmpty(itemLine)) return null;
+		string[] parts = itemLine.Split(new string[1] { "@|" }, StringSplitOptions.None);
+		if (parts.Length < 6) return null;
+		try
+		{
+			XmlDocument doc = new XmlDocument();
+			doc.Load(new MemoryStream(Encoding.UTF8.GetBytes(parts[5])));
+			XmlNodeList nodes = doc.GetElementsByTagName("codeBase");
+			if (nodes.Count == 0) return null;
+			return nodes[0].Attributes["href"].Value;
+		}
+		catch (Exception)
+		{
+			return null;
 		}
 	}
 
@@ -219,7 +270,7 @@ public class frmEditLanguage : Form
 		this.lblDLink.TabIndex = 3;
 		this.lblDLink.Text = "D. Link:";
 		this.btnAdd.DialogResult = System.Windows.Forms.DialogResult.OK;
-		this.btnAdd.Location = new System.Drawing.Point(116, 122);
+		this.btnAdd.Location = new System.Drawing.Point(116, 142);
 		this.btnAdd.Name = "btnAdd";
 		this.btnAdd.Size = new System.Drawing.Size(75, 23);
 		this.btnAdd.TabIndex = 4;
@@ -227,7 +278,7 @@ public class frmEditLanguage : Form
 		this.btnAdd.UseVisualStyleBackColor = true;
 		this.btnAdd.Click += new System.EventHandler(btnAdd_Click);
 		this.btnCancel.DialogResult = System.Windows.Forms.DialogResult.Cancel;
-		this.btnCancel.Location = new System.Drawing.Point(197, 122);
+		this.btnCancel.Location = new System.Drawing.Point(197, 142);
 		this.btnCancel.Name = "btnCancel";
 		this.btnCancel.Size = new System.Drawing.Size(75, 23);
 		this.btnCancel.TabIndex = 5;
@@ -253,7 +304,14 @@ public class frmEditLanguage : Form
 		this.chkAllLanguages.TabIndex = 8;
 		this.chkAllLanguages.Text = "Use this one URL for all languages";
 		this.chkAllLanguages.UseVisualStyleBackColor = true;
-		base.ClientSize = new System.Drawing.Size(284, 155);
+		base.ClientSize = new System.Drawing.Size(284, 175);
+		this.lblSharedUrl = new System.Windows.Forms.Label();
+		this.lblSharedUrl.AutoSize = false;
+		this.lblSharedUrl.Location = new System.Drawing.Point(16, 118);
+		this.lblSharedUrl.Size = new System.Drawing.Size(255, 15);
+		this.lblSharedUrl.ForeColor = System.Drawing.Color.FromArgb(0, 102, 0);
+		this.lblSharedUrl.Text = string.Empty;
+		base.Controls.Add(this.lblSharedUrl);
 		base.Controls.Add(this.chkAllLanguages);
 		base.Controls.Add(this.label1);
 		base.Controls.Add(this.txtFileName);

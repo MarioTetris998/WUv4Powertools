@@ -701,6 +701,48 @@ public class frmMain : Form
 		MessageBox.Show(sb.ToString(), "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
 	}
 
+	// Deletes every selected update at once. The delete button only ever handled the first one.
+	public void DeleteSelectedUpdates()
+	{
+		frmItemList list = mdiTabs.SelectedForm as frmItemList;
+		if (list == null || list.lstItems.SelectedItems.Count == 0)
+		{
+			return;
+		}
+
+		List<Update> doomed = new List<Update>();
+		foreach (ListViewItem row in list.lstItems.SelectedItems)
+		{
+			Update upd = row.Tag as Update;
+			if (upd != null && !doomed.Contains(upd)) doomed.Add(upd);
+		}
+		if (doomed.Count == 0) return;
+
+		string question;
+		if (doomed.Count == 1)
+		{
+			LangTitleDesc lang = doomed[0].getLang("en");
+			string title = (lang != null && !string.IsNullOrEmpty(lang.title)) ? lang.title : doomed[0].code;
+			question = "Delete the update " + title + "?";
+		}
+		else
+		{
+			question = "Delete these " + doomed.Count + " updates?";
+		}
+
+		if (MessageBox.Show(question, "Windows Update v4.0 PowerTools", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+		{
+			return;
+		}
+
+		list.PushUndoState();
+		int removed = list.RemoveUpdates(doomed);
+		list.ReloadItems();
+		RefreshEditButtons();
+		MessageBox.Show(removed + " update(s) deleted.\n\nSave the provider to write this to disk, or use Undo to take it back.",
+			"Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
+	}
+
 	private void selectAllToolStripMenuItem_Click(object sender, EventArgs e)
 	{
 		frmItemList list = mdiTabs.SelectedForm as frmItemList;
