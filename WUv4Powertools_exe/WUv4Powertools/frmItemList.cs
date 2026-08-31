@@ -200,7 +200,13 @@ public class frmItemList : Form
 	private Label lblRight;
 
 	// New fields for drag-drop and grouping
-	private ListViewItem draggedItem = null;
+	private readonly List<ListViewItem> draggedItems = new List<ListViewItem>();
+
+	// A thin bar drawn over the list showing where the drop will land. The built in insertion
+	// mark only works in the icon views, and this list is in details view.
+	private Panel dropIndicator;
+
+	private int dropIndex = -1;
 	private bool orderChanged = false;
 
 	public frmItemList()
@@ -218,6 +224,7 @@ public class frmItemList : Form
 		lstItems.DragEnter += LstItems_DragEnter;
 		lstItems.DragOver += LstItems_DragOver;
 		lstItems.DragDrop += LstItems_DragDrop;
+		lstItems.DragLeave += LstItems_DragLeave;
 
 		// Enable groups
 		lstItems.ShowGroups = true;
@@ -631,75 +638,156 @@ catch (Exception ex)
 	}
 
 	// Drag-drop event handlers
+	private void CreateDropIndicator()
+	{
+		if (dropIndicator != null) return;
+		dropIndicator = new Panel();
+		dropIndicator.Height = 2;
+		dropIndicator.BackColor = Color.FromArgb(0, 102, 204);
+		dropIndicator.Visible = false;
+		lstItems.Controls.Add(dropIndicator);
+	}
+
+	private void HideDropIndicator()
+	{
+		dropIndex = -1;
+		if (dropIndicator != null)
+		{
+			dropIndicator.Visible = false;
+		}
+	}
+
+	// Drags the whole selection rather than only the row under the cursor.
 	private void LstItems_ItemDrag(object sender, ItemDragEventArgs e)
 	{
-		draggedItem = (ListViewItem)e.Item;
-		lstItems.DoDragDrop(draggedItem, DragDropEffects.Move);
+		draggedItems.Clear();
+		foreach (ListViewItem row in lstItems.SelectedItems)
+		{
+			draggedItems.Add(row);
+		}
+		if (draggedItems.Count == 0) return;
+		CreateDropIndicator();
+		lstItems.DoDragDrop(draggedItems, DragDropEffects.Move);
+		HideDropIndicator();
 	}
 
 	private void LstItems_DragEnter(object sender, DragEventArgs e)
 	{
-		if (e.Data.GetDataPresent(typeof(ListViewItem)))
-		{
-			e.Effect = DragDropEffects.Move;
-		}
-		else
-		{
-			e.Effect = DragDropEffects.None;
-		}
+		e.Effect = (draggedItems.Count > 0) ? DragDropEffects.Move : DragDropEffects.None;
 	}
 
+	private void LstItems_DragLeave(object sender, EventArgs e)
+	{
+		HideDropIndicator();
+	}
+
+	// Follows the cursor with the drop bar, sitting above or below the row depending on which
+	// half of it the pointer is over.
 	private void LstItems_DragOver(object sender, DragEventArgs e)
 	{
-		if (e.Data.GetDataPresent(typeof(ListViewItem)))
+		if (draggedItems.Count == 0)
 		{
-			e.Effect = DragDropEffects.Move;
+			e.Effect = DragDropEffects.None;
+			return;
 		}
+		e.Effect = DragDropEffects.Move;
+
+		Point cp = lstItems.PointToClient(new Point(e.X, e.Y));
+		ListViewItem over = lstItems.GetItemAt(cp.X, cp.Y);
+		if (over == null)
+		{
+			HideDropIndicator();
+			return;
+		}
+
+		Rectangle bounds = over.Bounds;
+		bool below = cp.Y > bounds.Top + bounds.Height / 2;
+		dropIndex = below ? over.Index + 1 : over.Index;
+
+		CreateDropIndicator();
+		dropIndicator.Width = lstItems.ClientSize.Width;
+		dropIndicator.Left = 0;
+		dropIndicator.Top = below ? bounds.Bottom - 1 : bounds.Top;
+		dropIndicator.Visible = true;
+		dropIndicator.BringToFront();
 	}
 
 	private void LstItems_DragDrop(object sender, DragEventArgs e)
 	{
-		if (draggedItem == null) return;
+		int target = dropIndex;
+		HideDropIndicator();
+		if (draggedItems.Count == 0 || target < 0) return;
 
-		Point cp = lstItems.PointToClient(new Point(e.X, e.Y));
-		ListViewItem targetItem = lstItems.GetItemAt(cp.X, cp.Y);
-
-		if (targetItem == null || targetItem == draggedItem) return;
-
-		Update draggedUpdate = (Update)draggedItem.Tag;
-		Update targetUpdate = (Update)targetItem.Tag;
-
-		// Only allow reordering within the same group
-		if (draggedUpdate.group != targetUpdate.group)
+		// Everything being moved has to belong to one group, and the drop has to land in that same
+		// group, because the order is only meaningful within a group.
+		Update first = draggedItems[0].Tag as Update;
+		if (first == null) return;
+		int groupId = first.group;
+		foreach (ListViewItem row in draggedItems)
 		{
-			MessageBox.Show("You can only reorder updates within the same group!", 
-				"Different Groups", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+			Update upd = row.Tag as Update;
+			if (upd == null || upd.group != groupId)
+			{
+				MessageBox.Show("Select updates from a single category before reordering them.",
+					"Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				return;
+			}
+		}
+
+		int clamped = Math.Min(target, lstItems.Items.Count);
+		ListViewItem landing = (clamped < lstItems.Items.Count) ? lstItems.Items[clamped] : null;
+		while (landing != null && draggedItems.Contains(landing))
+		{
+			clamped++;
+			landing = (clamped < lstItems.Items.Count) ? lstItems.Items[clamped] : null;
+		}
+		Update landingUpdate = (landing != null) ? landing.Tag as Update : null;
+		if (landingUpdate != null && landingUpdate.group != groupId)
+		{
+			MessageBox.Show("Updates can only be reordered within their own category.",
+				"Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 			return;
 		}
 
-		// Ask for confirmation
-		DialogResult result = MessageBox.Show(
-			$"Are you sure you want to change the update order?\n\n" +
-			$"Moving: {draggedUpdate.getLang("en")?.title ?? draggedUpdate.code}\n" +
-			$"To position of: {targetUpdate.getLang("en")?.title ?? targetUpdate.code}",
-			"Confirm Order Change",
-			MessageBoxButtons.YesNo,
-			MessageBoxIcon.Question);
+		// Reordering is an edit like any other, so capture the state first and write the new order
+		// into the dictionaries below. Undo restores the arrays, so the order has to live there
+		// rather than only in the list on screen.
+		PushUndoState();
 
-		if (result != DialogResult.Yes) return;
+		lstItems.BeginUpdate();
+		try
+		{
+			// Removing an item from a ListView clears its Group, and a re-inserted item with no group
+			// falls into the default category. Hold each one and put it back afterwards.
+			List<ListViewGroup> groups = new List<ListViewGroup>();
+			foreach (ListViewItem row in draggedItems)
+			{
+				groups.Add(row.Group);
+			}
+			foreach (ListViewItem row in draggedItems)
+			{
+				lstItems.Items.Remove(row);
+			}
+			int insertAt = (landing != null) ? landing.Index : lstItems.Items.Count;
+			for (int i = 0; i < draggedItems.Count; i++)
+			{
+				lstItems.Items.Insert(insertAt + i, draggedItems[i]);
+				draggedItems[i].Group = groups[i];
+			}
+		}
+		finally
+		{
+			lstItems.EndUpdate();
+		}
 
-		// Reorder within the ListView
-		int draggedIndex = draggedItem.Index;
-		int targetIndex = targetItem.Index;
-
-		lstItems.Items.Remove(draggedItem);
-		lstItems.Items.Insert(targetIndex, draggedItem);
-
-		// Update custom order for all items in this group
-		ReassignGroupOrders(draggedUpdate.group);
-
+		ReassignGroupOrders(groupId);
 		orderChanged = true;
-		draggedItem = null;
+		ApplyDisplayOrder();
+		draggedItems.Clear();
+		if (frmMain != null)
+		{
+			frmMain.RefreshUndoRedoButtons();
+		}
 	}
 
 	private void ReassignGroupOrders(int groupId)
