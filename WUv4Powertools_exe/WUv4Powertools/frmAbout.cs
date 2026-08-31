@@ -1,3 +1,4 @@
+﻿using System;
 using System.ComponentModel;
 using System.Drawing;
 using System.IO;
@@ -170,7 +171,7 @@ internal class frmAbout : Form
 		this.labelProductName.Name = "labelProductName";
 		this.labelProductName.Size = new System.Drawing.Size(345, 17);
 		this.labelProductName.TabIndex = 19;
-		this.labelProductName.Text = "Nombre de producto";
+		this.labelProductName.Text = "Product Name";
 		this.labelProductName.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
 		this.labelVersion.Dock = System.Windows.Forms.DockStyle.Fill;
 		this.labelVersion.Location = new System.Drawing.Point(75, 31);
@@ -179,7 +180,7 @@ internal class frmAbout : Form
 		this.labelVersion.Name = "labelVersion";
 		this.labelVersion.Size = new System.Drawing.Size(345, 17);
 		this.labelVersion.TabIndex = 0;
-		this.labelVersion.Text = "Versión";
+		this.labelVersion.Text = "Version";
 		this.labelVersion.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
 		this.labelCopyright.Dock = System.Windows.Forms.DockStyle.Fill;
 		this.labelCopyright.Location = new System.Drawing.Point(75, 62);
@@ -197,27 +198,31 @@ internal class frmAbout : Form
 		this.labelCompanyName.Name = "labelCompanyName";
 		this.labelCompanyName.Size = new System.Drawing.Size(345, 17);
 		this.labelCompanyName.TabIndex = 22;
-		this.labelCompanyName.Text = "Nombre de la compañía";
+		this.labelCompanyName.Text = "Company Name";
 		this.labelCompanyName.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
-		this.textBoxDescription.BorderStyle = System.Windows.Forms.BorderStyle.None;
+		// The credits sit in a framed box of their own, sunken with a scroll bar, rather than the
+		// borderless run of text this used to be, which had nothing to mark it out from the labels
+		// above it.
+		this.textBoxDescription.BorderStyle = System.Windows.Forms.BorderStyle.Fixed3D;
+		this.textBoxDescription.BackColor = System.Drawing.SystemColors.Window;
+		this.textBoxDescription.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
 		this.textBoxDescription.Dock = System.Windows.Forms.DockStyle.Fill;
-		this.textBoxDescription.Font = new System.Drawing.Font("Verdana", 6.75f, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0);
 		this.textBoxDescription.Location = new System.Drawing.Point(75, 127);
-		this.textBoxDescription.Margin = new System.Windows.Forms.Padding(6, 3, 3, 3);
+		this.textBoxDescription.Margin = new System.Windows.Forms.Padding(6, 6, 12, 6);
 		this.textBoxDescription.Multiline = true;
 		this.textBoxDescription.Name = "textBoxDescription";
 		this.textBoxDescription.ReadOnly = true;
 		this.textBoxDescription.Size = new System.Drawing.Size(345, 152);
 		this.textBoxDescription.TabIndex = 23;
 		this.textBoxDescription.TabStop = false;
-		this.textBoxDescription.Text = "Descripción";
+		this.textBoxDescription.Text = "Description";
 		this.okButton.Anchor = System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right;
 		this.okButton.DialogResult = System.Windows.Forms.DialogResult.Cancel;
 		this.okButton.Location = new System.Drawing.Point(345, 290);
 		this.okButton.Name = "okButton";
 		this.okButton.Size = new System.Drawing.Size(75, 23);
 		this.okButton.TabIndex = 24;
-		this.okButton.Text = "&Aceptar";
+		this.okButton.Text = "&OK";
 		base.AcceptButton = this.okButton;
 		base.AutoScaleMode = System.Windows.Forms.AutoScaleMode.None;
 		base.ClientSize = new System.Drawing.Size(435, 328);
