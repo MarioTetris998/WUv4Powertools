@@ -483,6 +483,22 @@ public class frmItemList : Form
 			listViewItem.SubItems.Add(update.exclusive.ToString());
 			listViewItem.SubItems.Add(update.group.ToString());
 			listViewItem.Tag = update;
+
+			// An update brought in from a log arrives without a detection rule, so it is shown in bold
+			// until one is filled in. It cannot be offered to a machine in the meantime, because the
+			// placeholder rule names a registry key that never exists.
+			if (update.itemlines != null &&
+				update.itemlines.Any(l => LogImportNewItems.NeedsAttention(l)))
+			{
+				listViewItem.Font = new Font(lstItems.Font, FontStyle.Bold);
+			}
+
+			// Anything the last import added or corrected is tinted, so it is obvious which rows
+			// just changed. The tint is only for this session and is never written to the files.
+			if (LogImportHighlight.WasJustImported(provider, update.code))
+			{
+				listViewItem.BackColor = Color.FromArgb(255, 249, 196);
+			}
 			
 			// Thread-safe add to list
 			lock (lockObj)
@@ -852,25 +868,50 @@ catch (Exception ex)
 			}
 		}
 
-		// Find where this category sits in the list, so a drop can be clamped inside it. Dropping at
-		// the bottom of a category otherwise points at the next category's first row, which used to
-		// be refused outright and made reordering look broken.
-		int groupFirst = -1;
-		int groupLast = -1;
-		for (int i = 0; i < lstItems.Items.Count; i++)
+		// Reordering only rewrites the part of the files the list can see, so a filtered list would
+		// push every update that is hidden to the end of the provider.
+		if (!string.IsNullOrEmpty(searchFilter))
 		{
-			Update row = lstItems.Items[i].Tag as Update;
-			if (row == null || row.group != groupId) continue;
-			if (groupFirst < 0) groupFirst = i;
-			groupLast = i;
+			MessageBox.Show("Clear the search box before reordering. While a search is active the list only shows some of the updates, and the order would be written using just those.",
+				"Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+			draggedItems.Clear();
+			return;
 		}
-		if (groupFirst < 0) return;
 
-		int insertAt = Math.Max(groupFirst, Math.Min(target, groupLast + 1));
-		// Dragged rows sitting above the insertion point shift it up once they are taken out.
+		// The order lives on the updates themselves rather than in the rows on screen. Moving rows
+		// in place cannot work once the list is grouped: removing a row clears its group, and putting
+		// the group back appends the row to the end of that group no matter what index it was given,
+		// which is why a dragged update always landed at the bottom. Renumbering the updates and
+		// letting the list rebuild itself uses the sort that already puts a category in order.
+		HashSet<Update> moving = new HashSet<Update>();
 		foreach (ListViewItem row in draggedItems)
 		{
-			if (row.Index < insertAt) insertAt--;
+			Update upd = row.Tag as Update;
+			if (upd != null) moving.Add(upd);
+		}
+		if (moving.Count == 0) return;
+
+		// The category in its current order, with the updates being moved taken out, plus where in
+		// that shortened sequence the drop lands.
+		List<Update> rest = new List<Update>();
+		int insertInGroup = -1;
+		for (int i = 0; i < lstItems.Items.Count; i++)
+		{
+			if (i == target) insertInGroup = rest.Count;
+			Update upd = lstItems.Items[i].Tag as Update;
+			if (upd == null || upd.group != groupId || moving.Contains(upd)) continue;
+			rest.Add(upd);
+		}
+		if (insertInGroup < 0) insertInGroup = rest.Count;
+		if (insertInGroup > rest.Count) insertInGroup = rest.Count;
+
+		// Keep the dragged updates in the order they appear on screen rather than the order they
+		// happened to be selected in.
+		List<Update> movingInOrder = new List<Update>();
+		foreach (ListViewItem row in lstItems.Items)
+		{
+			Update upd = row.Tag as Update;
+			if (upd != null && moving.Contains(upd)) movingInOrder.Add(upd);
 		}
 
 		// Reordering is an edit like any other, so capture the state first and write the new order
@@ -878,34 +919,21 @@ catch (Exception ex)
 		// rather than only in the list on screen.
 		PushUndoState();
 
-		lstItems.BeginUpdate();
-		try
+		rest.InsertRange(insertInGroup, movingInOrder);
+		for (int i = 0; i < rest.Count; i++)
 		{
-			// Removing an item from a ListView clears its Group, and a re-inserted item with no group
-			// falls into the default category. Hold each one and put it back afterwards.
-			List<ListViewGroup> groups = new List<ListViewGroup>();
-			foreach (ListViewItem row in draggedItems)
-			{
-				groups.Add(row.Group);
-			}
-			foreach (ListViewItem row in draggedItems)
-			{
-				lstItems.Items.Remove(row);
-			}
-			if (insertAt < 0) insertAt = 0;
-			if (insertAt > lstItems.Items.Count) insertAt = lstItems.Items.Count;
-			for (int i = 0; i < draggedItems.Count; i++)
-			{
-				lstItems.Items.Insert(insertAt + i, draggedItems[i]);
-				draggedItems[i].Group = groups[i];
-			}
-		}
-		finally
-		{
-			lstItems.EndUpdate();
+			rest[i].customOrder = i;
 		}
 
-		ReassignGroupOrders(groupId);
+		// Rebuilding drops the ListViewItem objects, so the selection is restored by update.
+		OrganizeIntoGroups();
+		lstItems.SelectedItems.Clear();
+		foreach (ListViewItem row in lstItems.Items)
+		{
+			Update upd = row.Tag as Update;
+			if (upd != null && moving.Contains(upd)) row.Selected = true;
+		}
+		if (lstItems.SelectedItems.Count > 0) lstItems.SelectedItems[0].EnsureVisible();
 		orderChanged = true;
 		ApplyDisplayOrder();
 		draggedItems.Clear();

@@ -1,0 +1,27 @@
+# Superseded updates that must never be imported from logs.
+#
+# One update code per line. Blank lines and lines starting with # are ignored.
+# Matching is case insensitive and ignores surrounding whitespace.
+#
+# The code is the "name" attribute of an itemStatus entry in iuhist.xml, which is
+# also the second half of the itemID after com_microsoft. For example, given
+#
+#   <identity itemID="win98se.windows98....com_microsoft.811630_w98_5928." name="811630_W98_5928">
+#
+# the code to list here is
+#
+#   811630_W98_5928
+#
+# A trailing * matches any code that starts with the text before it, which is
+# useful when the same update was reissued with different build numbers:
+#
+#   811630_W98_*
+#
+# To exclude an update in one provider only, prefix it with the provider and a
+# colon. Without a prefix the code is excluded everywhere.
+#
+#   win98se:811630_W98_5928
+#
+# This file is read every time the import dialog opens, so edits take effect
+# without rebuilding or restarting the application.
+

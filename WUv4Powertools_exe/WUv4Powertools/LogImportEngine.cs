@@ -1,0 +1,1131 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace WUv4Powertools;
+
+// Reads one provider's five dictionaries into the shape the importer needs to ask two questions:
+// does this code already exist, and if so which languages does it already carry.
+public sealed class ProviderIndex
+{
+	public readonly string Provider;
+
+	// code -> locale -> the full itemID recorded in itemsindex.
+	private readonly Dictionary<string, Dictionary<string, string>> byCode =
+		new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+
+	// code -> locale -> the file GUID that itemsindex points at.
+	private readonly Dictionary<string, Dictionary<string, string>> guidByCode =
+		new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+
+	// file GUID -> the items.txt line it heads.
+	private readonly Dictionary<string, string> itemsByGuid =
+		new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+	// language GUID -> locale -> the string GUID holding that language's title.
+	private readonly Dictionary<string, Dictionary<string, string>> stringLocales =
+		new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+
+	// string GUID -> the title currently stored for it, so a log title can be compared with what
+	// is already there before anything is rewritten.
+	private readonly Dictionary<string, string> titleByStringGuid =
+		new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+	// string GUID -> the description stored for it. An import is refused when this would end up
+	// empty, because the logs cannot supply one.
+	private readonly Dictionary<string, string> descriptionByStringGuid =
+		new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+	// The category most of this provider's updates sit in, used for an update that arrives with
+	// no local record to copy one from.
+	private readonly Dictionary<string, int> groupTally = new Dictionary<string, int>();
+
+	public ProviderIndex(string provider, string[] items, string[] itemsIndex, string[] itemStringsIndex,
+		string[] itemStrings = null)
+	{
+		Provider = provider;
+
+		foreach (string line in items ?? new string[0])
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+			int comma = line.IndexOf(',');
+			if (comma <= 0) continue;
+			itemsByGuid[line.Substring(0, comma).Trim()] = line;
+
+			string[] fields = line.Split(new[] { "@|" }, StringSplitOptions.None);
+			if (fields.Length >= 4 && !string.IsNullOrEmpty(fields[3]))
+			{
+				if (!groupTally.ContainsKey(fields[3])) groupTally[fields[3]] = 0;
+				groupTally[fields[3]]++;
+			}
+		}
+
+		foreach (string line in itemStrings ?? new string[0])
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+			int comma = line.IndexOf(',');
+			if (comma <= 0) continue;
+			string head = line.Substring(0, comma);
+			int dot = head.LastIndexOf('.');
+			if (dot < 0) continue;
+			string stringGuid = head.Substring(dot + 1).Trim();
+			string[] cells = line.Substring(comma + 1).Split(new[] { "@|" }, StringSplitOptions.None);
+			titleByStringGuid[stringGuid] = cells[0];
+			descriptionByStringGuid[stringGuid] = cells.Length > 1 ? cells[1] : string.Empty;
+		}
+
+		foreach (string line in itemsIndex ?? new string[0])
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+			string head = line.Split(new[] { "@|" }, StringSplitOptions.None)[0];
+			int comma = head.LastIndexOf(',');
+			if (comma <= 0) continue;
+			string itemId = head.Substring(0, comma).Trim();
+			string guid = head.Substring(comma + 1).Trim();
+			string[] parts = itemId.Split('.');
+			if (parts.Length < 15) continue;
+
+			string code = parts[13];
+			string locale = parts[6];
+			if (!byCode.ContainsKey(code))
+			{
+				byCode[code] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+				guidByCode[code] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+			}
+			byCode[code][locale] = itemId;
+			guidByCode[code][locale] = guid;
+		}
+
+		foreach (string line in itemStringsIndex ?? new string[0])
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+			int comma = line.LastIndexOf(',');
+			if (comma <= 0) continue;
+			string[] key = line.Substring(0, comma).Split('.');
+			if (key.Length < 3) continue;
+			string locale = key[1];
+			string langGuid = key[2];
+			if (!stringLocales.ContainsKey(langGuid))
+			{
+				stringLocales[langGuid] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+			}
+			stringLocales[langGuid][locale] = line.Substring(comma + 1).Trim();
+		}
+	}
+
+	public bool HasCode(string code)
+	{
+		return byCode.ContainsKey(code);
+	}
+
+	public bool HasLocale(string code, string locale)
+	{
+		return byCode.ContainsKey(code) && byCode[code].ContainsKey(locale);
+	}
+
+	public IEnumerable<string> LocalesFor(string code)
+	{
+		return byCode.ContainsKey(code) ? byCode[code].Keys : Enumerable.Empty<string>();
+	}
+
+	// The entry an import copies its detection, group and installer settings from. English is
+	// preferred only because it is the one language every provider reliably carries.
+	public string SiblingItemId(string code)
+	{
+		if (!byCode.ContainsKey(code)) return null;
+		Dictionary<string, string> locales = byCode[code];
+		foreach (string preferred in new[] { "en", "de", "fr" })
+		{
+			if (locales.ContainsKey(preferred)) return locales[preferred];
+		}
+		return locales.Values.FirstOrDefault();
+	}
+
+	public string SiblingItemLine(string code)
+	{
+		if (!guidByCode.ContainsKey(code)) return null;
+		Dictionary<string, string> guids = guidByCode[code];
+		foreach (string preferred in new[] { "en", "de", "fr" })
+		{
+			if (guids.ContainsKey(preferred) && itemsByGuid.ContainsKey(guids[preferred])) return itemsByGuid[guids[preferred]];
+		}
+		foreach (string guid in guids.Values)
+		{
+			if (itemsByGuid.ContainsKey(guid)) return itemsByGuid[guid];
+		}
+		return null;
+	}
+
+	// Which language tag each locale uses in its download file names, learned from the updates the
+	// provider already holds. A fixed table would get this wrong, because the same folder runs
+	// Windows98-KB918547-ENU next to 888113USA8, and those two families disagree about nearly every
+	// language: ENU against USA, CSY against CZE, DEU against GER, ESN against SPA.
+	private Dictionary<string, Dictionary<string, Dictionary<string, int>>> family;
+
+	private Dictionary<string, Dictionary<string, int>> localeTally;
+
+	private void BuildNaming()
+	{
+		family = new Dictionary<string, Dictionary<string, Dictionary<string, int>>>(StringComparer.OrdinalIgnoreCase);
+		localeTally = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+
+		foreach (KeyValuePair<string, Dictionary<string, string>> code in guidByCode)
+		{
+			Dictionary<string, string> tokens = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+			foreach (KeyValuePair<string, string> pair in code.Value)
+			{
+				string line;
+				if (!itemsByGuid.TryGetValue(pair.Value, out line)) continue;
+				string leaf = LogImportEngine.LeafOfLine(line);
+				if (leaf == null) continue;
+				string token = LogImportParser.LanguageTokenOf(leaf);
+				if (token == null) continue;
+				tokens[pair.Key] = token;
+				Bump(localeTally, pair.Key, token);
+			}
+
+			if (tokens.Count < 2) continue;
+			foreach (KeyValuePair<string, string> from in tokens)
+			{
+				if (!family.ContainsKey(from.Value))
+				{
+					family[from.Value] = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+				}
+				foreach (KeyValuePair<string, string> to in tokens)
+				{
+					if (string.Equals(from.Key, to.Key, StringComparison.OrdinalIgnoreCase)) continue;
+					Bump(family[from.Value], to.Key, to.Value);
+				}
+			}
+		}
+	}
+
+	private static void Bump(Dictionary<string, Dictionary<string, int>> map, string key, string value)
+	{
+		if (!map.ContainsKey(key)) map[key] = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+		if (!map[key].ContainsKey(value)) map[key][value] = 0;
+		map[key][value]++;
+	}
+
+	private static string Best(Dictionary<string, int> counts)
+	{
+		if (counts == null || counts.Count == 0) return null;
+		return counts.OrderByDescending(x => x.Value).ThenBy(x => x.Key).First().Key;
+	}
+
+	// The tag this locale would use in a file named like the one given. Preference goes to a family
+	// that actually pairs the two, then to whatever this locale uses most often in this provider.
+	public string TokenFor(string locale, string siblingToken)
+	{
+		if (family == null) BuildNaming();
+		if (string.IsNullOrEmpty(locale)) return null;
+
+		if (siblingToken != null && family.ContainsKey(siblingToken) && family[siblingToken].ContainsKey(locale))
+		{
+			return Best(family[siblingToken][locale]);
+		}
+		if (localeTally.ContainsKey(locale)) return Best(localeTally[locale]);
+		return null;
+	}
+
+	// The category to file a brand new update under, taken from wherever most of this provider's
+	// updates already sit.
+	// Update codes in this provider whose article number matches, which is the only way a log
+	// download can be tied back to an update the dictionaries already know about.
+	public IEnumerable<string> CodesWithArticle(string article)
+	{
+		if (string.IsNullOrEmpty(article)) yield break;
+		foreach (string code in byCode.Keys)
+		{
+			if (code.IndexOf(article, StringComparison.OrdinalIgnoreCase) >= 0) yield return code;
+		}
+	}
+
+	public string MostCommonGroup()
+	{
+		if (groupTally.Count == 0) return "0";
+		return groupTally.OrderByDescending(x => x.Value).ThenBy(x => x.Key).First().Key;
+	}
+
+	public string ItemIdFor(string code, string locale)
+	{
+		Dictionary<string, string> locales;
+		if (!byCode.TryGetValue(code ?? string.Empty, out locales)) return null;
+		string id;
+		return locales.TryGetValue(locale ?? string.Empty, out id) ? id : null;
+	}
+
+	public string ItemGuidFor(string code, string locale)
+	{
+		Dictionary<string, string> locales;
+		if (!guidByCode.TryGetValue(code ?? string.Empty, out locales)) return null;
+		string guid;
+		return locales.TryGetValue(locale ?? string.Empty, out guid) ? guid : null;
+	}
+
+	public string ItemsLineFor(string code, string locale)
+	{
+		string guid = ItemGuidFor(code, locale);
+		if (guid == null) return null;
+		string line;
+		return itemsByGuid.TryGetValue(guid, out line) ? line : null;
+	}
+
+	// The language GUID an update's string set is keyed by, read from any of its items rows.
+	public string LangGuidFor(string code)
+	{
+		string line = SiblingItemLine(code);
+		if (line == null) return null;
+		string[] fields = line.Split(new[] { "@|" }, StringSplitOptions.None);
+		return fields.Length >= 3 ? fields[2] : null;
+	}
+
+	// True when this language already has description text, which is the only way an imported
+	// entry can end up with one.
+	public bool HasDescriptionFor(string code, string locale)
+	{
+		string langGuid = LangGuidFor(code);
+		if (langGuid == null) return false;
+		string stringGuid = StringGuidFor(langGuid, locale);
+		if (stringGuid == null) return false;
+		string description;
+		return descriptionByStringGuid.TryGetValue(stringGuid, out description) &&
+			!string.IsNullOrWhiteSpace(description);
+	}
+
+	public string TitleForStringGuid(string stringGuid)
+	{
+		if (string.IsNullOrEmpty(stringGuid)) return null;
+		string title;
+		return titleByStringGuid.TryGetValue(stringGuid, out title) ? title : null;
+	}
+
+	public bool HasStringFor(string langGuid, string locale)
+	{
+		return StringGuidFor(langGuid, locale) != null;
+	}
+
+	// The string GUID this language's title lives under, or null when it has none yet.
+	public string StringGuidFor(string langGuid, string locale)
+	{
+		if (string.IsNullOrEmpty(langGuid) || string.IsNullOrEmpty(locale)) return null;
+		Dictionary<string, string> byLocale;
+		if (!stringLocales.TryGetValue(langGuid, out byLocale)) return null;
+		string guid;
+		return byLocale.TryGetValue(locale, out guid) ? guid : null;
+	}
+}
+
+public sealed class ImportSummary
+{
+	public int ItemsAdded;
+
+	public int IndexEntriesAdded;
+
+	public int StringsAdded;
+
+	public int ProductLinksAdded;
+
+	public int Skipped;
+
+	// Entries whose download had to be worked out from how the provider names its other languages,
+	// because no log recorded one.
+	public int GuessedNames;
+
+	public readonly List<string> Guesses = new List<string>();
+
+	// Titles replaced with the authentic ones the service published, in place of whatever the
+	// translate step had put there.
+	public int TitlesCorrected;
+
+	// Rows already in the provider whose item GUID was put back to the published one.
+	public int GuidsCorrected;
+
+	// Rows added using the GUID the update was really published under, rather than a fresh one.
+	public int GuidsFromLog;
+
+	public int VersionsCorrected;
+
+	// Imported rows with no published date available, because only a catalogue file carries one.
+	public int WithoutPostedDate;
+
+	// Updates the provider had never held, brought in as drafts needing a detection rule.
+	public int NewUpdatesAdded;
+
+	// Records already present that the log put right.
+	public int Corrected;
+
+	public int FileNamesCorrected;
+
+	public int DatesCorrected;
+
+	// Updates whose code was respelled to the capitals the service published.
+	public int CodesRecased;
+
+	// Records whose restart flag was set to what the log watched happen.
+	public int RebootFlagsCorrected;
+
+	// Records now run the way the log watched them being installed.
+	public int CommandTypesCorrected;
+
+	public readonly List<string> Notes = new List<string>();
+
+	// Provider name to the number of updates it gained, so the result can be reported per operating
+	// system rather than as one total.
+	public readonly Dictionary<string, int> ByProvider =
+		new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+	// Providers written straight to disk because no tab had them open.
+	public readonly List<string> Written = new List<string>();
+
+	// Providers that were open in a tab and were refreshed on screen as well as written.
+	public readonly List<string> LeftOpen = new List<string>();
+
+	public readonly List<string> WriteErrors = new List<string>();
+
+	public void Count(string provider)
+	{
+		if (!ByProvider.ContainsKey(provider)) ByProvider[provider] = 0;
+		ByProvider[provider]++;
+	}
+}
+
+public static class LogImportEngine
+{
+	private static readonly string[] Sep = { "@|" };
+
+	// The language an entry imports into. The history file states one per entry, so a set of
+	// files covering several languages still lands in the right place. The chosen language is
+	// only used for entries that never stated one, unless the caller says detection was wrong.
+	private static string LocaleFor(ImportCandidate c, string chosen, bool overrideLanguage)
+	{
+		if (overrideLanguage) return chosen;
+		return string.IsNullOrEmpty(c.Language) ? chosen : c.Language;
+	}
+
+	// Works out what would happen to every candidate without changing anything, so the dialog can
+	// show a reason for each row before the user commits. Each candidate is judged against the
+	// provider it names, so one history file feeds every operating system and Internet Explorer
+	// version in the folder at once.
+	public static void Classify(List<ImportCandidate> candidates, ConsumerDictionary dictionary,
+		SupersededList superseded, string chosenLanguage, bool overrideLanguage)
+	{
+		foreach (ImportCandidate c in candidates)
+		{
+			string locale = LocaleFor(c, chosenLanguage, overrideLanguage);
+			ProviderStore store = dictionary.Find(c.Provider);
+
+			if (store == null)
+			{
+				c.Kind = ImportKind.OtherProvider;
+				c.Reason = c.Provider + " is not in this inventory";
+				c.Selected = false;
+				continue;
+			}
+
+			if (superseded != null && superseded.Excludes(c.Provider, c.Code))
+			{
+				c.Kind = ImportKind.Superseded;
+				c.Reason = "listed in superseded.txt";
+				c.Selected = false;
+				continue;
+			}
+
+			ProviderIndex index = store.Index;
+
+			if (index.HasLocale(c.Code, locale))
+			{
+				// The update is here, but the log may still know the real GUID, title, version or file
+				// name for it. Those are offered as corrections rather than applied unasked, because
+				// they rewrite a record that already works.
+				string existingLine = index.ItemsLineFor(c.Code, locale);
+				string existingId = index.ItemIdFor(c.Code, locale);
+				string langGuid = index.LangGuidFor(c.Code);
+				string stringGuid = langGuid == null ? null : index.StringGuidFor(langGuid, locale);
+				string existingTitle = index.TitleForStringGuid(stringGuid);
+
+				c.Fix = LogImportNewItems.Compare(c, locale, index, existingLine, existingId, existingTitle);
+				if (c.Fix.Any)
+				{
+					c.Kind = ImportKind.Correction;
+					c.Reason = "in " + locale + ", can correct " + c.Fix;
+				}
+				else
+				{
+					c.Kind = ImportKind.AlreadyPresent;
+					c.Reason = "already in " + locale;
+				}
+				// A correction only puts right what is already there, so it is offered ticked. Only an
+				// update arriving without a detection rule is left for the user to choose deliberately.
+				c.Selected = c.Kind == ImportKind.Correction;
+				continue;
+			}
+
+			// An update with no description here and none in the logs would come in blank, so it is
+			// left out rather than written half finished.
+			if (!index.HasDescriptionFor(c.Code, locale))
+			{
+				c.Kind = ImportKind.NoDescription;
+				c.Reason = index.HasCode(c.Code)
+					? "no description for " + locale + " here, and logs carry none"
+					: "new, and logs carry no description";
+				c.Selected = false;
+				continue;
+			}
+
+			if (index.HasCode(c.Code))
+			{
+				c.Kind = ImportKind.LanguageGap;
+				c.Reason = "missing " + locale + ", have " +
+					string.Join("/", index.LocalesFor(c.Code).OrderBy(x => x).Take(6).ToArray());
+				c.Selected = true;
+				continue;
+			}
+
+			c.Kind = ImportKind.NewUpdate;
+			c.Reason = string.IsNullOrEmpty(c.DownloadUrl)
+				? "new, comes in without a download or a detection rule"
+				: "new, comes in without a detection rule";
+			// Never ticked on the user's behalf. An update with no detection rule needs work before
+			// it is any use, so bringing one in is always a deliberate choice.
+			c.Selected = false;
+		}
+	}
+
+	// Applies the ticked candidates across every provider they belong to. Providers open in a tab are
+	// edited in memory and left for the user to save, the rest are written to disk here.
+	public static ImportSummary Apply(List<ImportCandidate> candidates, ConsumerDictionary dictionary,
+		string chosenLanguage, bool overrideLanguage, StringProvenance provenance)
+	{
+		ImportSummary summary = new ImportSummary();
+		if (provenance == null) provenance = StringProvenance.Load(dictionary.Root);
+
+		// Marks from an earlier run would only confuse which updates this one touched.
+		LogImportHighlight.Clear();
+
+		var byProvider = candidates
+			.Where(x => x.Selected)
+			.GroupBy(x => x.Provider, StringComparer.OrdinalIgnoreCase);
+
+		foreach (var group in byProvider)
+		{
+			ProviderStore store = dictionary.Find(group.Key);
+			if (store == null)
+			{
+				summary.Skipped += group.Count();
+				summary.Notes.Add(group.Key + " is not in this inventory, so its updates were left out");
+				continue;
+			}
+
+			// An open provider has to be able to take the whole import back in one step.
+			if (store.OpenTab != null) store.OpenTab.PushUndoState();
+
+			// Counted across both kinds of change. Watching only the number of rows added used to
+			// drop a provider whose updates were all corrections, since correcting adds no rows: the
+			// work was done and then never pushed to the tab or written to disk.
+			int before = summary.ItemsAdded + summary.Corrected;
+			ApplyToProvider(group.ToList(), store, chosenLanguage, overrideLanguage, summary, provenance);
+			if (summary.ItemsAdded + summary.Corrected == before) continue;
+
+			store.Dirty = true;
+			store.InvalidateIndex();
+
+			// An import applies to the inventory itself rather than leaving an edit to be saved later,
+			// so every provider it touches is written now. A provider open in a tab is refreshed from
+			// the same arrays and marked saved, so the tab and the files on disk cannot drift apart.
+			if (store.OpenTab != null)
+			{
+				store.PushToTab();
+				summary.LeftOpen.Add(store.Name);
+			}
+
+			try
+			{
+				store.Save();
+				summary.Written.Add(store.Name);
+				if (store.OpenTab != null) store.OpenTab.MarkSaved();
+			}
+			catch (Exception ex)
+			{
+				summary.WriteErrors.Add(store.Name + ": " + ex.Message);
+			}
+		}
+
+		provenance.Save();
+		return summary;
+	}
+
+	private static void ApplyToProvider(List<ImportCandidate> candidates, ProviderStore store,
+		string chosenLanguage, bool overrideLanguage, ImportSummary summary, StringProvenance provenance)
+	{
+		List<string> items = new List<string>(store.Items ?? new string[0]);
+		List<string> itemsIndex = new List<string>(store.ItemsIndex ?? new string[0]);
+		List<string> strings = new List<string>(store.ItemStrings ?? new string[0]);
+		List<string> stringsIndex = new List<string>(store.ItemStringsIndex ?? new string[0]);
+		List<string> product2Items = new List<string>(store.Product2Items ?? new string[0]);
+
+		ProviderIndex index = new ProviderIndex(store.Name, items.ToArray(), itemsIndex.ToArray(),
+			stringsIndex.ToArray(), strings.ToArray());
+
+		// Every language of the same new update has to share one string set, so the GUID minted for
+		// the first language is reused by the rest.
+		Dictionary<string, string> newLangGuids =
+			new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+		foreach (ImportCandidate c in candidates)
+		{
+			string locale = LocaleFor(c, chosenLanguage, overrideLanguage);
+			if (string.IsNullOrEmpty(locale))
+			{
+				summary.Skipped++;
+				continue;
+			}
+
+			if (c.Kind == ImportKind.Correction)
+			{
+				ApplyCorrection(c, locale, store, index, items, itemsIndex, strings, product2Items,
+				summary, provenance);
+				continue;
+			}
+
+			string sibling = index.SiblingItemLine(c.Code);
+			string siblingId = index.SiblingItemId(c.Code);
+
+			if (sibling == null || siblingId == null)
+			{
+				// The provider has never held this update, so there is nothing to copy a detection rule
+				// from. It comes in with a placeholder rule that matches nothing, which keeps it out of
+				// the way of real machines and marks it in the list as still needing work.
+				AddNewUpdate(c, locale, store, index, items, itemsIndex, strings, stringsIndex,
+					product2Items, newLangGuids, summary, provenance);
+				continue;
+			}
+
+			string[] fields = sibling.Split(Sep, StringSplitOptions.None);
+			if (fields.Length < 14)
+			{
+				summary.Skipped++;
+				summary.Notes.Add(store.Name + ": " + c.Code + " skipped, the entry it would copy is malformed");
+				continue;
+			}
+
+			// The log records the GUID the update was actually published under for this language, so
+			// it is used rather than a fresh one. That makes the row match what the service served.
+			string newGuid = string.IsNullOrEmpty(c.ItemGuid)
+				? Guid.NewGuid().ToString().ToUpper()
+				: c.ItemGuid;
+			if (!string.IsNullOrEmpty(c.ItemGuid)) summary.GuidsFromLog++;
+			string langGuid = fields[2];
+
+			// Only the locale is taken from the log. Every other part of the identifier comes from
+			// the entry already in the provider, so an import can never retarget an update at a
+			// different operating system by accident.
+			// The version is the update's own, not the operating system's, so it comes from the log
+			// when there is one. Everything else still comes from the sibling.
+			string newItemId = ReplaceLocale(siblingId, locale);
+			if (!string.IsNullOrEmpty(c.Version))
+			{
+				string withVersion = ReplaceVersion(newItemId, c.Version);
+				if (withVersion != newItemId) summary.VersionsCorrected++;
+				newItemId = withVersion;
+			}
+
+			// The installation block keeps the sibling's installer type, switches and reboot flag,
+			// and only the download itself is swapped for the localised one.
+			string installation = fields[5];
+			if (!string.IsNullOrEmpty(c.DownloadUrl))
+			{
+				installation = SetDownload(installation, c.DownloadUrl, c.FileName, c.Size, c.CleanFileName);
+			}
+			else
+			{
+				// No log recorded this download, so the file is named the way the provider names the
+				// same update in its other languages. A name with no language tag in it is one file
+				// serving every language and is left exactly as it is.
+				string siblingLeaf = LeafOfLine(sibling);
+				string siblingToken = siblingLeaf == null ? null : LogImportParser.LanguageTokenOf(siblingLeaf);
+				if (siblingToken != null)
+				{
+					string wanted = index.TokenFor(locale, siblingToken);
+					string guessedLeaf = wanted == null ? null : LogImportParser.SwapLanguageToken(siblingLeaf, wanted);
+					if (guessedLeaf != null)
+					{
+						installation = SetDownload(installation, null, guessedLeaf, 0);
+						summary.GuessedNames++;
+						if (summary.Guesses.Count < 40)
+						{
+							summary.Guesses.Add(store.Name + " " + locale + ": " + LogImportParser.StripHash(guessedLeaf));
+						}
+					}
+				}
+			}
+
+			// Every language was published at its own moment, so a published date belongs to this
+			// language's row alone. It is written into the copy being added, and the entry it was
+			// copied from keeps its own, which is why the sibling is never edited here.
+			// Only a catalogue entry carries a published date. A plain history file records when the
+			// machine downloaded the update, which is not the same thing and is never written.
+			string stamp = c.HasPostedDate ? c.Timestamp : fields[9];
+			if (!c.HasPostedDate) summary.WithoutPostedDate++;
+
+			string[] newFields = (string[])fields.Clone();
+			newFields[0] = newGuid + "," + c.Code;
+			newFields[5] = installation;
+			newFields[9] = stamp;
+			if (c.Size > 0)
+			{
+				newFields[8] = c.Size.ToString();
+			}
+
+			items.Add(string.Join("@|", newFields));
+			summary.ItemsAdded++;
+			summary.Count(store.Name);
+			LogImportHighlight.Add(store.Name, c.Code);
+
+			itemsIndex.Add(newItemId + "," + newGuid + "@|");
+			summary.IndexEntriesAdded++;
+
+			// The title in the log is the one the service actually published, so it replaces whatever
+			// is there now, which for most languages was produced by the translate step. The row is
+			// recorded as authentic so a later repair knows not to touch it.
+			if (LogImportNewItems.TitleUsable(c, locale))
+			{
+				string existingGuid = index.StringGuidFor(langGuid, locale);
+				if (existingGuid != null)
+				{
+					if (ReplaceTitle(strings, store.Name, existingGuid, c.Title, c.DetailsHref))
+					{
+						summary.TitlesCorrected++;
+					}
+					provenance.MarkAuthentic(store.Name, existingGuid);
+				}
+				else
+				{
+					string stringGuid = Guid.NewGuid().ToString().ToUpper();
+					stringsIndex.Add(store.Name + "." + locale + "." + langGuid + "," + stringGuid);
+					strings.Add(string.Format("{0}.{1},{2}@|{3}@|{4}/eula.htm@|@|{5}",
+						store.Name, stringGuid, c.Title, string.Empty, locale, c.DetailsHref));
+					summary.StringsAdded++;
+					provenance.MarkAuthentic(store.Name, stringGuid);
+				}
+			}
+
+			if (AddProductLink(product2Items, store.Name, newItemId)) summary.ProductLinksAdded++;
+		}
+
+		store.Items = items.ToArray();
+		store.ItemsIndex = itemsIndex.ToArray();
+		store.ItemStrings = strings.ToArray();
+		store.ItemStringsIndex = stringsIndex.ToArray();
+		store.Product2Items = product2Items.ToArray();
+	}
+
+	// itemstrings rows are <provider>.<guid>,<title>@|<description>@|<eula>@|@|<details>. Only the
+	// title and the details link come from the log, so the rest of the row is left as it stands.
+	private static bool ReplaceTitle(List<string> strings, string provider, string stringGuid,
+		string title, string detailsHref)
+	{
+		string key = provider + "." + stringGuid + ",";
+		for (int i = 0; i < strings.Count; i++)
+		{
+			if (string.IsNullOrEmpty(strings[i])) continue;
+			if (!strings[i].StartsWith(key, StringComparison.OrdinalIgnoreCase)) continue;
+
+			string[] parts = strings[i].Substring(key.Length).Split(Sep, StringSplitOptions.None);
+			if (parts.Length == 0) return false;
+			if (string.Equals(parts[0], title, StringComparison.Ordinal)) return false;
+
+			parts[0] = title;
+			if (parts.Length >= 5 && !string.IsNullOrEmpty(detailsHref)) parts[4] = detailsHref;
+			strings[i] = key + string.Join("@|", parts);
+			return true;
+		}
+		return false;
+	}
+
+	// The version is the final field of the identifier, as in com_microsoft.agent2_95.2_00_0_2202.
+	private static string ReplaceVersion(string itemId, string version)
+	{
+		string[] parts = itemId.Split('.');
+		if (parts.Length < 15) return itemId;
+		parts[14] = version;
+		return string.Join(".", parts);
+	}
+
+	// Writes a record for an update the provider has never held. The identifier comes from the log,
+	// because with nothing already under this code there is no local record to prefer.
+	private static void AddNewUpdate(ImportCandidate c, string locale, ProviderStore store,
+		ProviderIndex index, List<string> items, List<string> itemsIndex, List<string> strings,
+		List<string> stringsIndex, List<string> product2Items, Dictionary<string, string> newLangGuids,
+		ImportSummary summary, StringProvenance provenance)
+	{
+		if (string.IsNullOrEmpty(c.ItemId))
+		{
+			summary.Skipped++;
+			summary.Notes.Add(store.Name + ": " + c.Code + " skipped, the log gave no identifier for it");
+			return;
+		}
+
+		string itemId = ReplaceLocale(c.ItemId, locale);
+		if (!string.IsNullOrEmpty(c.Version)) itemId = ReplaceVersion(itemId, c.Version);
+
+		// Two languages of the same new update share one string set.
+		string langGuid;
+		if (!newLangGuids.TryGetValue(c.Code, out langGuid))
+		{
+			langGuid = Guid.NewGuid().ToString().ToUpper();
+			newLangGuids[c.Code] = langGuid;
+		}
+
+		string fileGuid = string.IsNullOrEmpty(c.ItemGuid)
+			? Guid.NewGuid().ToString().ToUpper()
+			: c.ItemGuid;
+		if (!string.IsNullOrEmpty(c.ItemGuid)) summary.GuidsFromLog++;
+
+		// A repeated run must not write the same record twice.
+		string head = fileGuid + ",";
+		if (items.Any(x => !string.IsNullOrEmpty(x) && x.StartsWith(head, StringComparison.OrdinalIgnoreCase)))
+		{
+			summary.Skipped++;
+			return;
+		}
+
+		items.Add(LogImportNewItems.BuildItemsLine(c, langGuid, index.MostCommonGroup(), fileGuid,
+			LogImportNewItems.BuildInstallation(c)));
+		summary.ItemsAdded++;
+		summary.NewUpdatesAdded++;
+		summary.Count(store.Name);
+		LogImportHighlight.Add(store.Name, c.Code);
+		if (!c.HasPostedDate) summary.WithoutPostedDate++;
+
+		itemsIndex.Add(itemId + "," + fileGuid + "@|");
+		summary.IndexEntriesAdded++;
+
+		string stringGuid = Guid.NewGuid().ToString().ToUpper();
+		stringsIndex.Add(store.Name + "." + locale + "." + langGuid + "," + stringGuid);
+		strings.Add(string.Format("{0}.{1},{2}@|{3}@|{4}/eula.htm@|@|{5}",
+			store.Name, stringGuid, c.Title, string.Empty, locale, c.DetailsHref));
+		summary.StringsAdded++;
+		provenance.MarkAuthentic(store.Name, stringGuid);
+
+		if (AddProductLink(product2Items, store.Name, itemId)) summary.ProductLinksAdded++;
+	}
+
+	// Puts right what the log knows about a record the provider already has. Nothing here changes
+	// which operating system the update targets.
+	private static void ApplyCorrection(ImportCandidate c, string locale, ProviderStore store,
+		ProviderIndex index, List<string> items, List<string> itemsIndex, List<string> strings,
+		List<string> product2Items, ImportSummary summary, StringProvenance provenance)
+	{
+		if (c.Fix == null || !c.Fix.Any) return;
+
+		// One code is shared by every language of an update, so respelling it covers the whole
+		// update and is done before anything else is looked up by code.
+		if (c.Fix.Capitalisation && !string.IsNullOrEmpty(c.Fix.CodeAsPublished) &&
+			RenameCode(items, itemsIndex, product2Items, c.Fix.CodeAsPublished))
+		{
+			summary.CodesRecased++;
+		}
+
+		string oldGuid = index.ItemGuidFor(c.Code, locale);
+		string itemId = index.ItemIdFor(c.Code, locale);
+		if (oldGuid == null || itemId == null) return;
+
+		// The index was built before the rename above, so the identifier it hands back still
+		// carries the old spelling. Writing that back would undo the rename on this one entry.
+		if (c.Fix.Capitalisation && !string.IsNullOrEmpty(c.Fix.CodeAsPublished))
+		{
+			itemId = ReplaceCode(itemId, c.Fix.CodeAsPublished);
+		}
+
+		// items.txt row for this language.
+		int itemAt = -1;
+		for (int i = 0; i < items.Count; i++)
+		{
+			if (string.IsNullOrEmpty(items[i])) continue;
+			if (items[i].StartsWith(oldGuid + ",", StringComparison.OrdinalIgnoreCase)) { itemAt = i; break; }
+		}
+		if (itemAt < 0) return;
+
+		string[] fields = items[itemAt].Split(Sep, StringSplitOptions.None);
+		if (fields.Length < 14) return;
+
+		string newGuid = oldGuid;
+		if (c.Fix.Guid && !string.IsNullOrEmpty(c.ItemGuid))
+		{
+			// Never move onto a GUID another record already uses, which would leave two rows sharing
+			// one identity and the index unable to tell them apart.
+			string taken = c.ItemGuid + ",";
+			bool clash = false;
+			for (int i = 0; i < items.Count; i++)
+			{
+				if (i == itemAt || string.IsNullOrEmpty(items[i])) continue;
+				if (items[i].StartsWith(taken, StringComparison.OrdinalIgnoreCase)) { clash = true; break; }
+			}
+			if (!clash)
+			{
+				newGuid = c.ItemGuid;
+				fields[0] = newGuid + "," + c.Code;
+				summary.GuidsCorrected++;
+			}
+		}
+
+		if (c.Fix.FileName && !string.IsNullOrEmpty(c.DownloadUrl))
+		{
+			fields[5] = SetDownload(fields[5], c.DownloadUrl, c.FileName, c.Size, c.CleanFileName);
+			summary.FileNamesCorrected++;
+		}
+
+		if (c.Fix.CommandType && !string.IsNullOrEmpty(c.Fix.CommandTypeAsObserved))
+		{
+			string was = LogImportNewItems.CommandTypeOf(fields[5]);
+			if (!string.IsNullOrEmpty(was))
+			{
+				fields[5] = fields[5].Replace(
+					"commandType=\"" + was + "\"",
+					"commandType=\"" + c.Fix.CommandTypeAsObserved + "\"");
+				summary.CommandTypesCorrected++;
+			}
+		}
+
+		if (c.Fix.Reboot && !string.IsNullOrEmpty(c.Fix.RebootAsObserved))
+		{
+			string was = LogImportNewItems.RebootOf(fields[5]);
+			if (was != null)
+			{
+				fields[5] = fields[5].Replace(
+					"needsReboot=\"" + was + "\"",
+					"needsReboot=\"" + c.Fix.RebootAsObserved + "\"");
+				summary.RebootFlagsCorrected++;
+			}
+		}
+
+		// A published date belongs to this language alone, so it only goes on this row.
+		if (c.HasPostedDate && fields[9] != c.Timestamp)
+		{
+			fields[9] = c.Timestamp;
+			summary.DatesCorrected++;
+		}
+
+		items[itemAt] = string.Join("@|", fields);
+
+		// itemsindex points at the row by GUID, so both have to move together.
+		string newItemId = itemId;
+		if (c.Fix.Version && !string.IsNullOrEmpty(c.Version))
+		{
+			newItemId = ReplaceVersion(itemId, c.Version);
+			summary.VersionsCorrected++;
+		}
+		// An items row is pointed at by one index entry per operating system target it serves, so a
+		// new GUID has to be followed through all of them. Only the entry naming this exact
+		// identifier has its version rewritten.
+		if (newItemId != itemId || newGuid != oldGuid)
+		{
+			for (int i = 0; i < itemsIndex.Count; i++)
+			{
+				if (string.IsNullOrEmpty(itemsIndex[i])) continue;
+				string entryHead = itemsIndex[i].Split(Sep, StringSplitOptions.None)[0];
+				int comma = entryHead.LastIndexOf(',');
+				if (comma <= 0) continue;
+
+				string entryId = entryHead.Substring(0, comma);
+				string entryGuid = entryHead.Substring(comma + 1).Trim();
+				if (!string.Equals(entryGuid, oldGuid, StringComparison.OrdinalIgnoreCase)) continue;
+
+				string tail = itemsIndex[i].Substring(entryHead.Length);
+				// Compared without case, since the rename may already have respelled this entry.
+				bool exact = string.Equals(entryId, itemId, StringComparison.OrdinalIgnoreCase);
+				itemsIndex[i] = (exact ? newItemId : entryId) + "," + newGuid + tail;
+			}
+		}
+
+		if (c.Fix.Title && LogImportNewItems.TitleUsable(c, locale))
+		{
+			string langGuid = index.LangGuidFor(c.Code);
+			string stringGuid = langGuid == null ? null : index.StringGuidFor(langGuid, locale);
+			if (stringGuid != null && ReplaceTitle(strings, store.Name, stringGuid, c.Title, c.DetailsHref))
+			{
+				summary.TitlesCorrected++;
+				provenance.MarkAuthentic(store.Name, stringGuid);
+			}
+		}
+
+		summary.Corrected++;
+		summary.Count(store.Name);
+		LogImportHighlight.Add(store.Name, c.Code);
+	}
+
+	// Writes the published spelling of a code into all three files that carry it. Matching ignores
+	// case, so only the capitals change and nothing is ever repointed at a different update.
+	private static bool RenameCode(List<string> items, List<string> itemsIndex,
+		List<string> product2Items, string published)
+	{
+		bool changed = false;
+
+		for (int i = 0; i < items.Count; i++)
+		{
+			if (string.IsNullOrEmpty(items[i])) continue;
+			int at = items[i].IndexOf("@|", StringComparison.Ordinal);
+			if (at < 0) continue;
+			string head = items[i].Substring(0, at);
+			int comma = head.IndexOf(',');
+			if (comma < 0) continue;
+			string code = head.Substring(comma + 1);
+			if (!string.Equals(code, published, StringComparison.OrdinalIgnoreCase)) continue;
+			if (string.Equals(code, published, StringComparison.Ordinal)) continue;
+			items[i] = head.Substring(0, comma + 1) + published + items[i].Substring(at);
+			changed = true;
+		}
+
+		for (int i = 0; i < itemsIndex.Count; i++)
+		{
+			if (string.IsNullOrEmpty(itemsIndex[i])) continue;
+			string head = itemsIndex[i].Split(Sep, StringSplitOptions.None)[0];
+			int comma = head.LastIndexOf(',');
+			if (comma <= 0) continue;
+			string[] parts = head.Substring(0, comma).Split('.');
+			if (parts.Length < 15) continue;
+			if (!string.Equals(parts[13], published, StringComparison.OrdinalIgnoreCase)) continue;
+			if (string.Equals(parts[13], published, StringComparison.Ordinal)) continue;
+			parts[13] = published;
+			itemsIndex[i] = string.Join(".", parts) + itemsIndex[i].Substring(comma);
+			changed = true;
+		}
+
+		for (int i = 0; i < product2Items.Count; i++)
+		{
+			if (string.IsNullOrEmpty(product2Items[i])) continue;
+			string[] refs = product2Items[i].Split(',');
+			bool touched = false;
+			for (int j = 1; j < refs.Length; j++)
+			{
+				string[] parts = refs[j].Split('.');
+				if (parts.Length < 14) continue;
+				if (!string.Equals(parts[12], published, StringComparison.OrdinalIgnoreCase)) continue;
+				if (string.Equals(parts[12], published, StringComparison.Ordinal)) continue;
+				parts[12] = published;
+				refs[j] = string.Join(".", parts);
+				touched = true;
+			}
+			if (touched)
+			{
+				product2Items[i] = string.Join(",", refs);
+				changed = true;
+			}
+		}
+
+		return changed;
+	}
+
+	// The code sits in the fourteenth field of an identifier.
+	private static string ReplaceCode(string itemId, string code)
+	{
+		string[] parts = itemId.Split('.');
+		if (parts.Length < 15) return itemId;
+		parts[13] = code;
+		return string.Join(".", parts);
+	}
+
+	private static string ReplaceLocale(string itemId, string locale)
+	{
+		string[] parts = itemId.Split('.');
+		if (parts.Length < 15) return itemId;
+		parts[6] = locale;
+		return string.Join(".", parts);
+	}
+
+	// The file part of the codeBase address, which is what carries the language tag and the hash.
+	internal static string LeafOfLine(string itemLineOrInstallation)
+	{
+		string href = ValueOf(itemLineOrInstallation, "codeBase href=\"", "\"");
+		if (string.IsNullOrEmpty(href)) return null;
+		int slash = href.LastIndexOf('/');
+		return slash < 0 ? href : href.Substring(slash + 1);
+	}
+
+	// Points the installation at a different file. A full address replaces the old one outright,
+	// while a null address keeps the folder the sibling used and only changes the file name.
+	private static string SetDownload(string installation, string newHref, string newLeaf, long size,
+		string cleanName = null)
+	{
+		string result = installation;
+		string oldHref = ValueOf(installation, "codeBase href=\"", "\"");
+		string oldLeaf = LeafOfLine(installation);
+
+		string href = newHref;
+		if (href == null && oldHref != null && oldLeaf != null && newLeaf != null)
+		{
+			href = oldHref.Substring(0, oldHref.Length - oldLeaf.Length) + newLeaf;
+		}
+		if (!string.IsNullOrEmpty(oldHref) && !string.IsNullOrEmpty(href))
+		{
+			result = result.Replace("codeBase href=\"" + oldHref + "\"",
+				"codeBase href=\"" + href + "\"");
+		}
+
+		// The name attribute and the command text are the file the installer runs, which is the
+		// download without its hash. They are only rewritten when they really are that file: plenty
+		// of entries name a payload inside the package instead, such as system32\\inetcomm.dll, and
+		// that has nothing to do with the language.
+		string oldName = ValueOf(installation, "name=\"", "\"");
+		string expected = LogImportParser.StripHash(oldLeaf);
+		if (!string.IsNullOrEmpty(oldName) && !string.IsNullOrEmpty(expected) && newLeaf != null &&
+			string.Equals(oldName, expected, StringComparison.OrdinalIgnoreCase))
+		{
+			// The log records the file the installer actually runs, so that is used in preference to
+			// working it out by taking the hash off the address.
+			string newName = string.IsNullOrEmpty(cleanName)
+				? LogImportParser.StripHash(newLeaf)
+				: cleanName;
+			result = result.Replace("name=\"" + oldName + "\"", "name=\"" + newName + "\"");
+			result = result.Replace(">" + oldName + "<", ">" + newName + "<");
+		}
+
+		if (size > 0)
+		{
+			string oldSize = ValueOf(installation, "<size>", "</size>");
+			if (!string.IsNullOrEmpty(oldSize)) result = result.Replace("<size>" + oldSize + "</size>", "<size>" + size + "</size>");
+		}
+
+		return result;
+	}
+
+	private static string ValueOf(string text, string open, string close)
+	{
+		int start = text.IndexOf(open, StringComparison.Ordinal);
+		if (start < 0) return null;
+		start += open.Length;
+		int end = text.IndexOf(close, start, StringComparison.Ordinal);
+		return end < 0 ? null : text.Substring(start, end - start);
+	}
+
+	// product2items lists every item a given operating system target offers, one target per line.
+	// The reference is appended to the matching line rather than replacing it.
+	private static bool AddProductLink(List<string> product2Items, string provider, string itemId)
+	{
+		string withoutProvider = itemId.StartsWith(provider + ".", StringComparison.OrdinalIgnoreCase)
+			? itemId.Substring(provider.Length + 1)
+			: itemId;
+
+		// The target key is the identifier with the namespace, code and version fields dropped.
+		// Dropping the provider leaves fourteen fields, of which the first eleven make the key
+		// that heads a product2items line.
+		string[] parts = withoutProvider.Split('.');
+		if (parts.Length < 14) return false;
+		string targetKey = provider + "." + string.Join(".", parts.Take(11).ToArray());
+
+		for (int i = 0; i < product2Items.Count; i++)
+		{
+			if (string.IsNullOrEmpty(product2Items[i])) continue;
+			int comma = product2Items[i].IndexOf(',');
+			string head = comma < 0 ? product2Items[i] : product2Items[i].Substring(0, comma);
+			if (!string.Equals(head.TrimEnd('.'), targetKey.TrimEnd('.'), StringComparison.OrdinalIgnoreCase)) continue;
+			if (product2Items[i].IndexOf(withoutProvider, StringComparison.OrdinalIgnoreCase) >= 0) return false;
+			product2Items[i] = product2Items[i].TrimEnd(',') + "," + withoutProvider;
+			return true;
+		}
+
+		product2Items.Add(targetKey + "," + withoutProvider);
+		return true;
+	}
+}

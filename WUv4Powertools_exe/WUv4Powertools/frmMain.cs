@@ -117,6 +117,8 @@ public class frmMain : Form
 
 	private ToolStripMenuItem repairProviderToolStripMenuItem;
 
+	private ToolStripMenuItem importLogsToolStripMenuItem;
+
 	private ToolStripMenuItem helpToolStripMenuItem;
 
 	private ToolStripMenuItem aboutToolStripMenuItem;
@@ -445,8 +447,30 @@ public class frmMain : Form
 
 	private void btnStringFix_Click(object sender, EventArgs e)
 	{
-		frmItemList frmItemList2 = (frmItemList)base.Tag;
+		frmItemList frmItemList2 = mdiTabs.SelectedForm as frmItemList;
+		if (frmItemList2 == null || frmItemList2.lstItems.SelectedItems.Count == 0)
+		{
+			MessageBox.Show("Select an update first.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			return;
+		}
 		Update upd = (Update)frmItemList2.lstItems.SelectedItems[0].Tag;
+
+		// Every language other than English is replaced by a machine translation of the English
+		// text, so anything authentic would be lost. Titles that came out of a real Windows Update
+		// log are recorded when they are imported, and those are kept.
+		StringProvenance provenance = string.IsNullOrEmpty(folderBrowserDialogSrc)
+			? null
+			: StringProvenance.Load(folderBrowserDialogSrc);
+		string kept = provenance == null || provenance.Count == 0
+			? ""
+			: "\n\nStrings that came from a real Windows Update log are left as they are.";
+		if (MessageBox.Show(
+			"Replace every other language for this update with a machine translation of the English title and description?" + kept + "\n\nThis cannot be undone from here.",
+			"Windows Update v4.0 PowerTools", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+		{
+			return;
+		}
+		frmItemList2.PushUndoState();
 		List<string> _baseGuids = new List<string>();
 		List<string> __baseLangs = new List<string>();
 		string[] _baseLangs = new string[26]
@@ -476,6 +500,8 @@ public class frmMain : Form
 			for (int l = 0; l < baseGuids.Length; l++)
 			{
 				string baseGuid = baseGuids[l];
+				// A title taken from a real log is authentic, so it is never translated over.
+				if (provenance != null && provenance.IsAuthentic(frmItemList2.provider, baseGuid)) continue;
 				if (baseLangs[l] != "en" && line2.Contains(baseGuid))
 				{
 					string title = line2.Split(new string[1] { "@|" }, StringSplitOptions.None)[0].Split(new char[1] { ',' }, 2)[1];
@@ -806,6 +832,33 @@ public class frmMain : Form
 	// Reports what does not line up across the five dictionary files and offers to drop the
 	// product2items references that resolve to nothing. Repairing only edits the in memory copy,
 	// so nothing reaches disk until the provider is saved.
+	// Every provider currently open in a tab, so the importer can edit those in place rather than
+	// writing over what the user has not saved yet.
+	internal List<frmItemList> OpenProviders()
+	{
+		List<frmItemList> open = new List<frmItemList>();
+		foreach (MdiTabControl.TabPage page in mdiTabs.TabPages)
+		{
+			frmItemList list = page.Form as frmItemList;
+			if (list != null) open.Add(list);
+		}
+		return open;
+	}
+
+	// Reads a machine's update history and log and offers what they contain that the whole consumer
+	// folder is missing, across every operating system and Internet Explorer version in it.
+	public void importLogsToolStripMenuItem_Click(object sender, EventArgs e)
+	{
+		if (string.IsNullOrEmpty(folderBrowserDialogSrc))
+		{
+			MessageBox.Show("Open an inventory first.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			return;
+		}
+		new frmImportLogs(this, folderBrowserDialogSrc).ShowDialog(this);
+		RefreshUndoRedoButtons();
+		UpdateStatusForTab();
+	}
+
 	public void repairProviderToolStripMenuItem_Click(object sender, EventArgs e)
 	{
 		frmItemList list = mdiTabs.SelectedForm as frmItemList;
@@ -945,9 +998,18 @@ public class frmMain : Form
 	// altogether. The previous contents are kept alongside as .bak.
 	private static void SaveProviderFiles(string providerDir, frmItemList list)
 	{
+		SaveProviderFiles(providerDir, list.l_product2items, list.l_itemsindex, list.l_items,
+			list.l_itemstringsindex, list.l_itemstrings);
+	}
+
+	// The same write, taking the arrays directly, so a provider that is not open in a tab can be
+	// written by the log importer.
+	internal static void SaveProviderFiles(string providerDir, string[] product2Items, string[] itemsIndex,
+		string[] items, string[] itemStringsIndex, string[] itemStrings)
+	{
 		Encoding latin1 = Encoding.GetEncoding("ISO-8859-1");
 		string[] names = DictionaryFileNames;
-		string[][] payloads = new string[5][] { list.l_product2items, list.l_itemsindex, list.l_items, list.l_itemstringsindex, list.l_itemstrings };
+		string[][] payloads = new string[5][] { product2Items, itemsIndex, items, itemStringsIndex, itemStrings };
 		Encoding[] encodings = new Encoding[5] { latin1, latin1, latin1, latin1, Encoding.Unicode };
 
 		string[] targets = new string[names.Length];
@@ -1316,6 +1378,7 @@ public class frmMain : Form
 		this.toolsToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.restoreBackupToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.repairProviderToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+		this.importLogsToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.helpToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.aboutToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.tbSearch = new System.Windows.Forms.ToolStrip();
@@ -1472,11 +1535,15 @@ public class frmMain : Form
 		this.selectAllToolStripMenuItem.Size = new System.Drawing.Size(144, 22);
 		this.selectAllToolStripMenuItem.Text = "Select &All";
 		this.selectAllToolStripMenuItem.Click += new System.EventHandler(selectAllToolStripMenuItem_Click);
-		this.toolsToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[2] { this.repairProviderToolStripMenuItem, this.restoreBackupToolStripMenuItem });
+		this.toolsToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[3] { this.importLogsToolStripMenuItem, this.repairProviderToolStripMenuItem, this.restoreBackupToolStripMenuItem });
 		this.restoreBackupToolStripMenuItem.Name = "restoreBackupToolStripMenuItem";
 		this.restoreBackupToolStripMenuItem.Size = new System.Drawing.Size(190, 22);
 		this.restoreBackupToolStripMenuItem.Text = "&Undo Last Save";
 		this.restoreBackupToolStripMenuItem.Click += new System.EventHandler(restoreBackupToolStripMenuItem_Click);
+		this.importLogsToolStripMenuItem.Name = "importLogsToolStripMenuItem";
+		this.importLogsToolStripMenuItem.Size = new System.Drawing.Size(190, 22);
+		this.importLogsToolStripMenuItem.Text = "&Import Updates from Logs...";
+		this.importLogsToolStripMenuItem.Click += new System.EventHandler(importLogsToolStripMenuItem_Click);
 		this.repairProviderToolStripMenuItem.Name = "repairProviderToolStripMenuItem";
 		this.repairProviderToolStripMenuItem.Size = new System.Drawing.Size(190, 22);
 		this.repairProviderToolStripMenuItem.Text = "&Validate and Repair Provider";

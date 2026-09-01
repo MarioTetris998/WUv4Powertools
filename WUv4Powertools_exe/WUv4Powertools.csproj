@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+﻿<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
   <PropertyGroup>
     <AssemblyName>WUv4Powertools</AssemblyName>
     <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
@@ -19,6 +19,11 @@
     <ProjectReference Include="..\ConsoleControl_dll\ConsoleControl.csproj" />
     <ProjectReference Include="..\WindowsFormsAero_dll\WindowsFormsAero.csproj" />
     <ProjectReference Include="..\MdiTabControl_dll\MdiTabControl.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="superseded.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Reference Include="Microsoft.CSharp" />
