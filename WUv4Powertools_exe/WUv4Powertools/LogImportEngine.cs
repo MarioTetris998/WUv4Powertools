@@ -78,8 +78,11 @@ public sealed class ProviderIndex
 			string[] cells = line.Substring(comma + 1).Split(new[] { "@|" }, StringSplitOptions.None);
 			titleByStringGuid[stringGuid] = cells[0];
 			descriptionByStringGuid[stringGuid] = cells.Length > 1 ? cells[1] : string.Empty;
-			eulaByStringGuid[stringGuid] = cells.Length > 2 ? cells[2] : string.Empty;
-			detailsByStringGuid[stringGuid] = cells.Length > 4 ? cells[4] : string.Empty;
+			// A row too short to hold these has no such field at all, which is not the same as
+			// holding an empty one. Reporting it as empty offered a correction on a row that could
+			// not take one, so it was counted and then never written.
+			eulaByStringGuid[stringGuid] = cells.Length > 2 ? cells[2] : null;
+			detailsByStringGuid[stringGuid] = cells.Length > 4 ? cells[4] : null;
 		}
 
 		foreach (string line in itemsIndex ?? new string[0])
@@ -1039,6 +1042,31 @@ public static class LogImportEngine
 		return removed;
 	}
 
+	// The row a language points at right now, read from the entries as they stand rather than from
+	// the index built when the import began.
+	private static string LiveGuidFor(List<string> itemsIndex, string code, string locale)
+	{
+		if (itemsIndex == null || string.IsNullOrEmpty(code)) return null;
+
+		foreach (string entry in itemsIndex)
+		{
+			if (string.IsNullOrEmpty(entry)) continue;
+
+			string head = entry.Split(Sep, StringSplitOptions.None)[0];
+			int comma = head.LastIndexOf(',');
+			if (comma <= 0) continue;
+
+			string[] parts = head.Substring(0, comma).Split('.');
+			if (parts.Length < 15) continue;
+			if (!string.Equals(parts[13], code, StringComparison.OrdinalIgnoreCase)) continue;
+			if (!string.Equals(parts[6], locale, StringComparison.OrdinalIgnoreCase)) continue;
+
+			return head.Substring(comma + 1).Trim();
+		}
+
+		return null;
+	}
+
 	// The version is the final field of the identifier, as in com_microsoft.agent2_95.2_00_0_2202.
 	private static string ReplaceVersion(string itemId, string version)
 	{
@@ -1139,7 +1167,15 @@ public static class LogImportEngine
 
 		string oldGuid = index.ItemGuidFor(c.Code, locale);
 		string itemId = index.ItemIdFor(c.Code, locale);
-		if (oldGuid == null || itemId == null) return;
+		if (oldGuid == null || itemId == null)
+		{
+			// Offered against a record that cannot be found again. Saying nothing here left the
+			// correction on the list every time, with no sign of why it never took.
+			summary.Skipped++;
+			summary.Notes.Add(store.Name + ": " + c.Code + " (" + locale +
+				") skipped, no record of it could be found for that language");
+			return;
+		}
 
 		// The index was built before the rename above, so the identifier it hands back still
 		// carries the old spelling. Writing that back would undo the rename on this one entry.
@@ -1155,7 +1191,33 @@ public static class LogImportEngine
 			if (string.IsNullOrEmpty(items[i])) continue;
 			if (items[i].StartsWith(oldGuid + ",", StringComparison.OrdinalIgnoreCase)) { itemAt = i; break; }
 		}
-		if (itemAt < 0) return;
+		if (itemAt < 0)
+		{
+			// What the index hands back was read before this import began, and rows move while it
+			// runs: putting an update onto one row leaves the languages that shared it pointing at
+			// a row that has since gone. The entry for this language is read again as it stands now
+			// rather than the correction being dropped.
+			string live = LiveGuidFor(itemsIndex, c.Code, locale);
+			if (live != null)
+			{
+				for (int i = 0; i < items.Count; i++)
+				{
+					if (string.IsNullOrEmpty(items[i])) continue;
+					if (!items[i].StartsWith(live + ",", StringComparison.OrdinalIgnoreCase)) continue;
+
+					itemAt = i;
+					oldGuid = live;
+					break;
+				}
+			}
+		}
+		if (itemAt < 0)
+		{
+			summary.Skipped++;
+			summary.Notes.Add(store.Name + ": " + c.Code + " (" + locale +
+				") skipped, the row it names is not there");
+			return;
+		}
 
 		string[] fields = items[itemAt].Split(Sep, StringSplitOptions.None);
 		if (fields.Length < 14) return;
@@ -1459,6 +1521,8 @@ public static class LogImportEngine
 
 	private static string ValueOf(string text, string open, string close)
 	{
+		if (string.IsNullOrEmpty(text)) return null;
+
 		int start = text.IndexOf(open, StringComparison.Ordinal);
 		if (start < 0) return null;
 		start += open.Length;
