@@ -677,6 +677,17 @@ public class frmMain : Form
 		{
 			question += "This system is edition specific, so entries are written for " + target.Edition + ".\n";
 		}
+		// Copying into a browser inventory from an operating system one keeps the system the
+		// update was for, so it is offered to that browser running on that system. Worth saying,
+		// because the update was written for the system rather than for the browser.
+		if (target.IsInternetExplorer &&
+			!UpdateCopier.IsKnownInternetExplorer(UpdateClipboard.SourceProvider))
+		{
+			question += "\nThese updates keep the operating system they are for, and will be offered to ";
+			question += dest.provider + " running on it. Anything for a system this browser version was";
+			question += " never released for is left out, and the result will say which.\n";
+		}
+
 		if (UpdateCopier.IsCrossInternetExplorerVersion(UpdateClipboard.SourceProvider, dest.provider))
 		{
 			question += "\nWARNING: these are different Internet Explorer versions. The detection block";

@@ -376,6 +376,20 @@ public class frmImportLogs : Form
 		}
 
 		List<string> notices = new List<string>();
+
+		// A file dated at or after the cutoff is not from the era these inventories cover, so it
+		// is refused outright rather than partly read. This is said first, and the label it goes
+		// in is already red, so it is the first thing seen when nothing appears to import.
+		if (result.LateDatedFiles.Count > 0)
+		{
+			notices.Add(string.Format(
+				"Cannot import {0} file{1}, because {2} from {3} or newer: {4}",
+				result.LateDatedFiles.Count,
+				result.LateDatedFiles.Count == 1 ? string.Empty : "s",
+				result.LateDatedFiles.Count == 1 ? "it is" : "they are",
+				LogImportParser.FirstRejectedYear,
+				string.Join(", ", result.LateDatedFiles.ToArray())));
+		}
 		if (result.RejectedFiles.Count > 0)
 		{
 			notices.Add(string.Format("Skipped {0} file{1} that mention Windows Update Restored: {2}",

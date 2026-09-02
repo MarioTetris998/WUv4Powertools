@@ -84,6 +84,13 @@ public static class UpdateCopier
 	// True when the two providers are different Internet Explorer versions. The detection block of an
 	// IE update tests the installed IE version, so a copy across versions will not match and the
 	// update either never offers or offers against the wrong browser.
+	// Whether a provider is one of the Internet Explorer inventories.
+	public static bool IsKnownInternetExplorer(string provider)
+	{
+		ProviderTarget target = TargetFor(provider);
+		return target != null && target.IsInternetExplorer;
+	}
+
 	public static bool IsCrossInternetExplorerVersion(string source, string destination)
 	{
 		ProviderTarget a = TargetFor(source);
@@ -94,14 +101,6 @@ public static class UpdateCopier
 
 	// Splits an itemID that still carries its provider prefix.
 	// Returns false when it does not have the expected shape.
-	// Whether an identifier names one of the Internet Explorer products, which is how a copy
-	// between browser versions is told apart from a copy between operating systems.
-	private static bool IsInternetExplorerId(string[] parts)
-	{
-		return parts != null && parts.Length > 1 &&
-			parts[1].StartsWith("internetexplorer", StringComparison.OrdinalIgnoreCase);
-	}
-
 	public static bool TrySplit(string itemId, out string[] parts)
 	{
 		parts = (itemId ?? string.Empty).Split('.');
@@ -137,11 +136,13 @@ public static class UpdateCopier
 		}
 		string locale = parts[6];
 
-		// An Internet Explorer update is held once for each operating system that version of the
-		// browser runs on, so the operating system belongs to the update rather than to the
-		// provider. Replacing it with the provider's own would land every copy on one system, and
-		// the browser version is the only thing that really changes between these providers.
-		bool keepSystem = destination.IsInternetExplorer && IsInternetExplorerId(parts);
+		// An Internet Explorer provider holds an update once for each operating system that version
+		// of the browser runs on, so the operating system belongs to the update rather than to the
+		// provider and is kept whatever the update was copied from. That is what lets an update be
+		// taken from an operating system and offered to the browser on that same system, and it is
+		// why these providers describe the browser rather than any one system. The identifiers
+		// line up field for field with the operating system providers, so nothing else has to move.
+		bool keepSystem = destination.IsInternetExplorer;
 
 		StringBuilder sb = new StringBuilder();
 		sb.Append(destination.Provider).Append('.');
