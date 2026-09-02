@@ -458,9 +458,11 @@ public class frmMain : Form
 		// Every language other than English is replaced by a machine translation of the English
 		// text, so anything authentic would be lost. Titles that came out of a real Windows Update
 		// log are recorded when they are imported, and those are kept.
-		StringProvenance provenance = string.IsNullOrEmpty(folderBrowserDialogSrc)
+		// Read from the folder this provider came from, not from whichever folder is open now.
+		string provenanceFolder = FolderOf(frmItemList2);
+		StringProvenance provenance = string.IsNullOrEmpty(provenanceFolder)
 			? null
-			: StringProvenance.Load(folderBrowserDialogSrc);
+			: StringProvenance.Load(provenanceFolder);
 		string kept = provenance == null || provenance.Count == 0
 			? ""
 			: "\n\nStrings that came from a real Windows Update log are left as they are.";
@@ -579,7 +581,7 @@ public class frmMain : Form
 			}
 		}
 
-		string providerDir = folderBrowserDialogSrc + "\\" + frmItemList2.provider;
+		string providerDir = FolderOf(frmItemList2) + "\\" + frmItemList2.provider;
 		pbBusy.Style = ProgressBarStyle.Marquee;
 		new Thread((ThreadStart)delegate
 		{
@@ -1012,7 +1014,7 @@ public class frmMain : Form
 			return;
 		}
 
-		string providerDir = folderBrowserDialogSrc + "\\" + list.provider;
+		string providerDir = FolderOf(list) + "\\" + list.provider;
 		DateTime newest = DateTime.MinValue;
 		int found = 0;
 		foreach (string name in DictionaryFileNames)
@@ -1077,6 +1079,16 @@ public class frmMain : Form
 
 	// The same write, taking the arrays directly, so a provider that is not open in a tab can be
 	// written by the log importer.
+	// The folder a provider was read from. Everything written for it goes back there rather
+	// than into whichever folder happens to be open now, so opening the drivers folder and
+	// returning to an inventory no longer saves that inventory among the drivers.
+	private string FolderOf(frmItemList list)
+	{
+		if (list != null && !string.IsNullOrEmpty(list.sourceFolder)) return list.sourceFolder;
+
+		return folderBrowserDialogSrc;
+	}
+
 	internal static void SaveProviderFiles(string providerDir, string[] product2Items, string[] itemsIndex,
 		string[] items, string[] itemStringsIndex, string[] itemStrings)
 	{

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.ComponentModel;
 using System.Drawing;
 using System.IO;
@@ -59,6 +59,10 @@ public class frmProvider : Form
 							
 							// Validate all files exist before trying to load them
 							string basePath = $"{frmMain2.folderBrowserDialogSrc}\\{frmItemList2.provider}";
+
+							// Kept so that saving writes back to the folder this came from, whatever folder is
+							// opened afterwards.
+							frmItemList2.sourceFolder = frmMain2.folderBrowserDialogSrc;
 							string[] requiredFiles = {
 								"items.txt",
 								"itemsindex.txt",

@@ -172,6 +172,11 @@ public class frmItemList : Form
 
 	public string[] l_productgroupstrings;
 
+	// The folder this provider was read from. Saving used whichever folder was last opened
+	// instead, so opening a second one and coming back wrote this provider into it, even
+	// where nothing of the sort belonged there.
+	public string sourceFolder;
+
 	public string[] l_products;
 
 	public string[] u_items;

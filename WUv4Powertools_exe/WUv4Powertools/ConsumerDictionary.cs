@@ -123,6 +123,17 @@ public sealed class ConsumerDictionary
 
 	// Reads providers.txt for the list of providers, then loads each one that is actually present.
 	// A provider already open in a tab is taken from the tab rather than from disk.
+	// Whether a provider was read from the folder now being loaded. An empty folder belongs to
+	// a tab that did not come from one, and is accepted so nothing that used to work stops.
+	private static bool SameFolder(string tabFolder, string root)
+	{
+		if (string.IsNullOrEmpty(tabFolder)) return true;
+
+		char[] trailing = new char[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar };
+		return string.Equals(tabFolder.TrimEnd(trailing), (root ?? string.Empty).TrimEnd(trailing),
+			StringComparison.OrdinalIgnoreCase);
+	}
+
 	public static ConsumerDictionary Load(string root, IEnumerable<frmItemList> openTabs)
 	{
 		ConsumerDictionary dictionary = new ConsumerDictionary { Root = root };
@@ -133,7 +144,14 @@ public sealed class ConsumerDictionary
 		Dictionary<string, frmItemList> tabs = new Dictionary<string, frmItemList>(StringComparer.OrdinalIgnoreCase);
 		foreach (frmItemList tab in openTabs ?? Enumerable.Empty<frmItemList>())
 		{
-			if (tab != null && !string.IsNullOrEmpty(tab.provider)) tabs[tab.provider] = tab;
+			if (tab == null || string.IsNullOrEmpty(tab.provider)) continue;
+
+			// Only a tab read from this same folder. Matching on the name alone would take a
+			// provider open from another folder, read its rows as though they belonged here and
+			// write them back into the wrong one.
+			if (!SameFolder(tab.sourceFolder, root)) continue;
+
+			tabs[tab.provider] = tab;
 		}
 
 		foreach (string line in File.ReadAllLines(providersFile))
