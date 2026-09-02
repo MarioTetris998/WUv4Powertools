@@ -33,6 +33,12 @@ public sealed class ProviderIndex
 
 	// string GUID -> the description stored for it. An import is refused when this would end up
 	// empty, because the logs cannot supply one.
+	private readonly Dictionary<string, string> eulaByStringGuid =
+		new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+	private readonly Dictionary<string, string> detailsByStringGuid =
+		new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
 	private readonly Dictionary<string, string> descriptionByStringGuid =
 		new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -72,6 +78,8 @@ public sealed class ProviderIndex
 			string[] cells = line.Substring(comma + 1).Split(new[] { "@|" }, StringSplitOptions.None);
 			titleByStringGuid[stringGuid] = cells[0];
 			descriptionByStringGuid[stringGuid] = cells.Length > 1 ? cells[1] : string.Empty;
+			eulaByStringGuid[stringGuid] = cells.Length > 2 ? cells[2] : string.Empty;
+			detailsByStringGuid[stringGuid] = cells.Length > 4 ? cells[4] : string.Empty;
 		}
 
 		foreach (string line in itemsIndex ?? new string[0])
@@ -319,6 +327,20 @@ public sealed class ProviderIndex
 			!string.IsNullOrWhiteSpace(description);
 	}
 
+	// The licence address a string row holds, or null when there is no such row.
+	public string EulaForStringGuid(string stringGuid)
+	{
+		string value;
+		return eulaByStringGuid.TryGetValue(stringGuid ?? string.Empty, out value) ? value : null;
+	}
+
+	// The more information address a string row holds, or null when there is no such row.
+	public string DetailsForStringGuid(string stringGuid)
+	{
+		string value;
+		return detailsByStringGuid.TryGetValue(stringGuid ?? string.Empty, out value) ? value : null;
+	}
+
 	public string TitleForStringGuid(string stringGuid)
 	{
 		if (string.IsNullOrEmpty(stringGuid)) return null;
@@ -353,6 +375,9 @@ public sealed class ImportSummary
 
 	// Rows removed because another row of the same update already held that file.
 	public int RowsMerged;
+
+	// Licence and more information addresses put right.
+	public int LinksCorrected;
 
 	public int StringsAdded;
 
@@ -477,6 +502,12 @@ public static class LogImportEngine
 				string existingTitle = index.TitleForStringGuid(stringGuid);
 
 				c.Fix = LogImportNewItems.Compare(c, locale, index, existingLine, existingId, existingTitle);
+
+				// The licence and the more information address are stated by the source for this exact
+				// language, and both are held per language, so a row carrying another language's is put
+				// right. These used to be written only when the title happened to change as well.
+				c.Fix.Eula = LogImportNewItems.LinkDiffers(EulaFor(c, locale), index.EulaForStringGuid(stringGuid));
+				c.Fix.Details = LogImportNewItems.LinkDiffers(c.DetailsHref, index.DetailsForStringGuid(stringGuid));
 
 				// One file serving several languages is a single row, and a row can carry only one
 				// identifier and one restart flag. The log states those for each language separately,
@@ -749,7 +780,7 @@ public static class LogImportEngine
 			// the file this language would use is one another row of the same update already carries,
 			// that row answers for this language too and no second row holding the same download is
 			// written. The name is weighed without its case and without the cabpool hash.
-			string shared = RowWithSameFile(items, c.Code, LeafOfLine(string.Join("@|", newFields)));
+			string shared = RowWithSameFile(items, c.Code, string.Join("@|", newFields));
 			if (shared != null)
 			{
 				string[] sharedFields = shared.Split(Sep, StringSplitOptions.None);
@@ -834,6 +865,40 @@ public static class LogImportEngine
 
 	// itemstrings rows are <provider>.<guid>,<title>@|<description>@|<eula>@|@|<details>. Only the
 	// title and the details link come from the log, so the rest of the row is left as it stands.
+	// Writes the licence and more information addresses into a string row, leaving the title and
+	// description as they are. Either may be null, meaning leave that one alone.
+	private static bool ReplaceLinks(List<string> strings, string provider, string stringGuid,
+		string eula, string details)
+	{
+		string key = provider + "." + stringGuid + ",";
+		for (int i = 0; i < strings.Count; i++)
+		{
+			if (string.IsNullOrEmpty(strings[i])) continue;
+			if (!strings[i].StartsWith(key, StringComparison.OrdinalIgnoreCase)) continue;
+
+			string[] parts = strings[i].Substring(key.Length).Split(Sep, StringSplitOptions.None);
+			if (parts.Length < 5) return false;
+
+			bool moved = false;
+			if (!string.IsNullOrEmpty(eula) && !string.Equals(parts[2], eula, StringComparison.Ordinal))
+			{
+				parts[2] = eula;
+				moved = true;
+			}
+			if (!string.IsNullOrEmpty(details) && !string.Equals(parts[4], details, StringComparison.Ordinal))
+			{
+				parts[4] = details;
+				moved = true;
+			}
+			if (!moved) return false;
+
+			strings[i] = key + string.Join("@|", parts);
+			return true;
+		}
+
+		return false;
+	}
+
 	private static bool ReplaceTitle(List<string> strings, string provider, string stringGuid,
 		string title, string detailsHref)
 	{
@@ -875,21 +940,35 @@ public static class LogImportEngine
 		return comma <= 0 ? null : line.Substring(0, comma).Trim();
 	}
 
-	// A row of this update whose download is the same file as the one named, weighed without
-	// case and without the cabpool hash. Null when no row carries it.
-	private static string RowWithSameFile(List<string> items, string code, string leaf)
+	// The address a row downloads from, with the hash the cabpool appends taken off the file name.
+	// The whole address matters, not just the file name: the language often sits in the path, as
+	// in selfupd/x86/w98/de/cun.cab, so two languages can name the same file and still be two
+	// different downloads.
+	private static string DownloadKey(string itemLine)
 	{
-		if (items == null || string.IsNullOrEmpty(code) || string.IsNullOrEmpty(leaf)) return null;
+		string href = ValueOf(itemLine, "codeBase href=\"", "\"");
+		if (string.IsNullOrEmpty(href)) return null;
 
-		string wanted = LogImportParser.StripHash(leaf);
+		int slash = href.LastIndexOf('/');
+		if (slash < 0) return LogImportParser.StripHash(href);
+
+		return href.Substring(0, slash + 1) + LogImportParser.StripHash(href.Substring(slash + 1));
+	}
+
+	// A row of this update that downloads from the same address as the one given. Null when no
+	// row does.
+	private static string RowWithSameFile(List<string> items, string code, string itemLine)
+	{
+		string wanted = DownloadKey(itemLine);
+		if (items == null || string.IsNullOrEmpty(code) || string.IsNullOrEmpty(wanted)) return null;
+
 		foreach (string line in items)
 		{
 			if (!string.Equals(CodeOfRow(line), code, StringComparison.OrdinalIgnoreCase)) continue;
 
-			string other = LeafOfLine(line);
+			string other = DownloadKey(line);
 			if (other == null) continue;
-			if (string.Equals(LogImportParser.StripHash(other), wanted,
-				StringComparison.OrdinalIgnoreCase)) return line;
+			if (string.Equals(other, wanted, StringComparison.OrdinalIgnoreCase)) return line;
 		}
 
 		return null;
@@ -914,11 +993,11 @@ public static class LogImportEngine
 			string code = CodeOfRow(line);
 			if (code == null || !codes.Contains(code)) continue;
 
-			string leaf = LeafOfLine(line);
+			string address = DownloadKey(line);
 			string guid = GuidOfRow(line);
-			if (leaf == null || guid == null) continue;
+			if (address == null || guid == null) continue;
 
-			string key = code + "|" + LogImportParser.StripHash(leaf);
+			string key = code + "|" + address;
 			string keptGuid;
 			if (!keptByFile.TryGetValue(key, out keptGuid))
 			{
@@ -1197,6 +1276,21 @@ public static class LogImportEngine
 		if (c.Fix.Version && !string.IsNullOrEmpty(c.Version))
 		{
 			SetVersionEverywhere(itemsIndex, product2Items, c.Code, c.Version);
+		}
+
+		// Written on their own, so a link is put right even where the title is already correct.
+		if (c.Fix.Eula || c.Fix.Details)
+		{
+			string langGuidForLinks = index.LangGuidFor(c.Code);
+			string linkGuid = langGuidForLinks == null
+				? null
+				: index.StringGuidFor(langGuidForLinks, locale);
+			if (linkGuid != null && ReplaceLinks(strings, store.Name, linkGuid,
+				c.Fix.Eula ? EulaFor(c, locale) : null, c.Fix.Details ? c.DetailsHref : null))
+			{
+				summary.LinksCorrected++;
+				changed = true;
+			}
 		}
 
 		if (c.Fix.Title && LogImportNewItems.TitleUsable(c, locale))

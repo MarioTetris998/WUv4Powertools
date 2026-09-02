@@ -73,6 +73,15 @@ public static class LogImportNewItems
 			size, url, name);
 	}
 
+	// Whether the address the source states differs from the one held. An address the source does
+	// not state is never treated as a difference, so nothing is blanked for want of a source.
+	public static bool LinkDiffers(string stated, string held)
+	{
+		if (string.IsNullOrEmpty(stated) || held == null) return false;
+
+		return !string.Equals(stated, held, StringComparison.Ordinal);
+	}
+
 	// Whether a title out of a log may be written over what the provider already holds.
 	// English is the language this application translates everything else from, so its title is
 	// the one thing an import must never overwrite: get that wrong and every other language
@@ -92,6 +101,10 @@ public static class LogImportNewItems
 		public bool Guid;
 		public bool Title;
 		public bool Version;
+
+		public bool Eula;
+
+		public bool Details;
 		public bool FileName;
 
 		// The provider spells the update code with different capitals than the service did.
@@ -115,7 +128,8 @@ public static class LogImportNewItems
 		{
 			get
 			{
-				return Guid || Title || Version || FileName || Capitalisation || Reboot || CommandType;
+				return Guid || Title || Version || FileName || Capitalisation || Reboot || CommandType
+				|| Eula || Details;
 			}
 		}
 
@@ -125,6 +139,8 @@ public static class LogImportNewItems
 			if (Guid) parts.Add("GUID");
 			if (Title) parts.Add("title");
 			if (Version) parts.Add("version");
+			if (Eula) parts.Add("licence link");
+			if (Details) parts.Add("information link");
 			if (FileName) parts.Add("file name");
 			if (Capitalisation) parts.Add("capitals");
 			if (Reboot) parts.Add("restart flag");
