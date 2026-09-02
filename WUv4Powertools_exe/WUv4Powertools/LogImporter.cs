@@ -332,6 +332,21 @@ public static class LogImportParser
 		return latest;
 	}
 
+	// Whether a piece of text names the restored service. Used on an address as well as on a
+	// whole file, so nothing carrying it is ever written into an inventory.
+	public static bool NamesRestoredService(string text)
+	{
+		if (string.IsNullOrEmpty(text)) return false;
+
+		string lower = text.ToLowerInvariant();
+		foreach (string marker in RestoredMarkers)
+		{
+			if (lower.Contains(marker)) return true;
+		}
+
+		return false;
+	}
+
 	public static bool MentionsRestored(string path)
 	{
 		try

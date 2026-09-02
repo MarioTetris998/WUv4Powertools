@@ -219,7 +219,10 @@ public class frmAddUpdate : Form
 		txtDescription.Text = "This component allows you to display the Menus and Dialogs of Internet Explorer in French.";
 		txtEULA.Text = "5737";
 		txtFileName.Text = "ieuifr.EXE";
-		txtDLink.Text = "http://download.windowsupdaterestored.com/updates/CabPool/ieuifr_B79C6D4192031BC831636CAD3AE22233AE948B43.EXE";
+		// Left empty on purpose. This example used to carry an address on the restored
+		// service, which put that address into the box every time the dialog was opened and
+		// into the update if it was saved from there.
+		txtDLink.Text = string.Empty;
 		txtUpdCode.Text = "PlugUIFR_W98_IE60_5737";
 		chkRebootReq.Checked = true;
 		chkExclusive.Checked = true;

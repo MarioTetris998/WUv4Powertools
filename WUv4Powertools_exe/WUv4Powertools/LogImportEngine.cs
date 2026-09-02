@@ -270,6 +270,25 @@ public sealed class ProviderIndex
 		return !string.IsNullOrEmpty(guid) && itemsByGuid.ContainsKey(guid);
 	}
 
+	// How many languages share the row this language points at. One file serving every language
+	// is held as a single row, and anything written on it is written for all of them at once.
+	public int LanguagesOnRowFor(string code, string locale)
+	{
+		string guid = ItemGuidFor(code, locale);
+		if (string.IsNullOrEmpty(guid)) return 0;
+
+		Dictionary<string, string> locales;
+		if (!guidByCode.TryGetValue(code ?? string.Empty, out locales)) return 0;
+
+		int sharing = 0;
+		foreach (KeyValuePair<string, string> pair in locales)
+		{
+			if (string.Equals(pair.Value, guid, StringComparison.OrdinalIgnoreCase)) sharing++;
+		}
+
+		return sharing;
+	}
+
 	public string ItemsLineFor(string code, string locale)
 	{
 		string guid = ItemGuidFor(code, locale);
@@ -328,6 +347,12 @@ public sealed class ImportSummary
 	public int ItemsAdded;
 
 	public int IndexEntriesAdded;
+
+	// Languages given a row that was already there, because the file is the same one.
+	public int LanguagesSharingAFile;
+
+	// Rows removed because another row of the same update already held that file.
+	public int RowsMerged;
 
 	public int StringsAdded;
 
@@ -452,6 +477,17 @@ public static class LogImportEngine
 				string existingTitle = index.TitleForStringGuid(stringGuid);
 
 				c.Fix = LogImportNewItems.Compare(c, locale, index, existingLine, existingId, existingTitle);
+
+				// One file serving several languages is a single row, and a row can carry only one
+				// identifier and one restart flag. The log states those for each language separately,
+				// so offering them here would put right what one language says and leave the next
+				// language asking for the opposite, over and over. They are only offered where the row
+				// belongs to this language alone.
+				if (index.LanguagesOnRowFor(c.Code, locale) > 1)
+				{
+					c.Fix.Guid = false;
+					c.Fix.Reboot = false;
+				}
 				if (c.Fix.Any)
 				{
 					c.Kind = ImportKind.Correction;
@@ -570,6 +606,17 @@ public static class LogImportEngine
 		List<string> strings = new List<string>(store.ItemStrings ?? new string[0]);
 		List<string> stringsIndex = new List<string>(store.ItemStringsIndex ?? new string[0]);
 		List<string> product2Items = new List<string>(store.Product2Items ?? new string[0]);
+
+		// Updates this import is about to deal with. Any of them already holding the same file in
+		// more than one row is put on a single row first, so what follows reads and corrects the
+		// row that will still be there afterwards. Merging at the end instead threw away rows
+		// that had just been corrected.
+		HashSet<string> touched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (ImportCandidate c in candidates)
+		{
+			if (!string.IsNullOrEmpty(c.Code)) touched.Add(c.Code);
+		}
+		summary.RowsMerged += MergeRowsSharingAFile(items, itemsIndex, touched);
 
 		ProviderIndex index = new ProviderIndex(store.Name, items.ToArray(), itemsIndex.ToArray(),
 			stringsIndex.ToArray(), strings.ToArray());
@@ -698,6 +745,26 @@ public static class LogImportEngine
 				newFields[8] = c.Size.ToString();
 			}
 
+			// One file serving several languages belongs in a single row that they all point at. Where
+			// the file this language would use is one another row of the same update already carries,
+			// that row answers for this language too and no second row holding the same download is
+			// written. The name is weighed without its case and without the cabpool hash.
+			string shared = RowWithSameFile(items, c.Code, LeafOfLine(string.Join("@|", newFields)));
+			if (shared != null)
+			{
+				string[] sharedFields = shared.Split(Sep, StringSplitOptions.None);
+				int sharedComma = sharedFields[0].IndexOf(',');
+				if (sharedComma > 0)
+				{
+					newGuid = sharedFields[0].Substring(0, sharedComma).Trim();
+					if (sharedFields.Length > 2) langGuid = sharedFields[2];
+				}
+				else
+				{
+					shared = null;
+				}
+			}
+
 			// Another entry has already given this language a row, so adding a second would leave two
 			// records under one identifier and the catalogue unable to tell them apart.
 			if (!takenIds.Add(newItemId))
@@ -708,13 +775,27 @@ public static class LogImportEngine
 				continue;
 			}
 
-			items.Add(string.Join("@|", newFields));
-			summary.ItemsAdded++;
+			if (shared == null)
+			{
+				items.Add(string.Join("@|", newFields));
+				summary.ItemsAdded++;
+			}
+			else
+			{
+				summary.LanguagesSharingAFile++;
+			}
 			summary.Count(store.Name);
 			LogImportHighlight.Add(store.Name, c.Code);
 
 			itemsIndex.Add(newItemId + "," + newGuid + "@|");
 			summary.IndexEntriesAdded++;
+
+			// The version belongs to the update, so the languages already here are brought onto the
+			// same one rather than being left behind by the language just added.
+			if (!string.IsNullOrEmpty(c.Version))
+			{
+				SetVersionEverywhere(itemsIndex, product2Items, c.Code, c.Version);
+			}
 
 			// The title in the log is the one the service actually published, so it replaces whatever
 			// is there now, which for most languages was produced by the translate step. The row is
@@ -772,6 +853,111 @@ public static class LogImportEngine
 			return true;
 		}
 		return false;
+	}
+
+	// The update code an items row carries, or null when the row is not one.
+	private static string CodeOfRow(string line)
+	{
+		if (string.IsNullOrEmpty(line)) return null;
+
+		int at = line.IndexOf("@|", StringComparison.Ordinal);
+		string head = at < 0 ? line : line.Substring(0, at);
+		int comma = head.IndexOf(',');
+		return comma < 0 ? null : head.Substring(comma + 1).Trim();
+	}
+
+	// The identifier at the front of an items row.
+	private static string GuidOfRow(string line)
+	{
+		if (string.IsNullOrEmpty(line)) return null;
+
+		int comma = line.IndexOf(',');
+		return comma <= 0 ? null : line.Substring(0, comma).Trim();
+	}
+
+	// A row of this update whose download is the same file as the one named, weighed without
+	// case and without the cabpool hash. Null when no row carries it.
+	private static string RowWithSameFile(List<string> items, string code, string leaf)
+	{
+		if (items == null || string.IsNullOrEmpty(code) || string.IsNullOrEmpty(leaf)) return null;
+
+		string wanted = LogImportParser.StripHash(leaf);
+		foreach (string line in items)
+		{
+			if (!string.Equals(CodeOfRow(line), code, StringComparison.OrdinalIgnoreCase)) continue;
+
+			string other = LeafOfLine(line);
+			if (other == null) continue;
+			if (string.Equals(LogImportParser.StripHash(other), wanted,
+				StringComparison.OrdinalIgnoreCase)) return line;
+		}
+
+		return null;
+	}
+
+	// Puts every language of an update that uses one file onto a single row. Where two rows of
+	// the same update hold the same download, the first is kept, every index entry naming the
+	// others is pointed at it, and the others are taken out. Returns how many rows went.
+	private static int MergeRowsSharingAFile(List<string> items, List<string> itemsIndex,
+		HashSet<string> codes)
+	{
+		if (items == null || itemsIndex == null || codes == null || codes.Count == 0) return 0;
+
+		// The row each duplicate should give way to, by the identifier it used to have.
+		Dictionary<string, string> replacement =
+			new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		Dictionary<string, string> keptByFile =
+			new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+		foreach (string line in items)
+		{
+			string code = CodeOfRow(line);
+			if (code == null || !codes.Contains(code)) continue;
+
+			string leaf = LeafOfLine(line);
+			string guid = GuidOfRow(line);
+			if (leaf == null || guid == null) continue;
+
+			string key = code + "|" + LogImportParser.StripHash(leaf);
+			string keptGuid;
+			if (!keptByFile.TryGetValue(key, out keptGuid))
+			{
+				keptByFile[key] = guid;
+				continue;
+			}
+			if (!string.Equals(keptGuid, guid, StringComparison.OrdinalIgnoreCase))
+			{
+				replacement[guid] = keptGuid;
+			}
+		}
+		if (replacement.Count == 0) return 0;
+
+		// Every entry that named a row being taken out now names the one being kept.
+		for (int i = 0; i < itemsIndex.Count; i++)
+		{
+			if (string.IsNullOrEmpty(itemsIndex[i])) continue;
+
+			string head = itemsIndex[i].Split(Sep, StringSplitOptions.None)[0];
+			int comma = head.LastIndexOf(',');
+			if (comma <= 0) continue;
+
+			string kept;
+			if (!replacement.TryGetValue(head.Substring(comma + 1).Trim(), out kept)) continue;
+
+			itemsIndex[i] = head.Substring(0, comma + 1) + kept + itemsIndex[i].Substring(head.Length);
+		}
+
+		int removed = 0;
+		for (int i = items.Count - 1; i >= 0; i--)
+		{
+			string guid = GuidOfRow(items[i]);
+			if (guid == null || !replacement.ContainsKey(guid)) continue;
+
+			items.RemoveAt(i);
+			removed++;
+		}
+
+		return removed;
 	}
 
 	// The version is the final field of the identifier, as in com_microsoft.agent2_95.2_00_0_2202.
@@ -1004,6 +1190,15 @@ public static class LogImportEngine
 			RepointProductLinks(product2Items, itemId, newItemId);
 		}
 
+		// The version belongs to the update rather than to any one of its languages, so it goes
+		// on every entry of that code. Writing it only on the entry for the language being
+		// imported left every other language on the old version, and the identifier then did not
+		// match the one the service published.
+		if (c.Fix.Version && !string.IsNullOrEmpty(c.Version))
+		{
+			SetVersionEverywhere(itemsIndex, product2Items, c.Code, c.Version);
+		}
+
 		if (c.Fix.Title && LogImportNewItems.TitleUsable(c, locale))
 		{
 			string langGuid = index.LangGuidFor(c.Code);
@@ -1122,6 +1317,10 @@ public static class LogImportEngine
 	private static string SetDownload(string installation, string newHref, string newLeaf, long size,
 		string cleanName = null)
 	{
+		// An address on the restored service is never written into an inventory, whatever it
+		// was read from. Only the original service is a source for these.
+		if (LogImportParser.NamesRestoredService(newHref)) return installation;
+
 		string result = installation;
 		string oldHref = ValueOf(installation, "codeBase href=\"", "\"");
 		string oldLeaf = LeafOfLine(installation);
@@ -1238,6 +1437,38 @@ public static class LogImportEngine
 		}
 
 		return locale + "/corp_eula.htm";
+	}
+
+	// Writes the version onto every entry of an update, whatever language or operating system it
+	// is for, and carries each rewritten identifier into product2items. Returns how many moved.
+	private static int SetVersionEverywhere(List<string> itemsIndex, List<string> product2Items,
+		string code, string version)
+	{
+		if (itemsIndex == null || string.IsNullOrEmpty(code) || version == null) return 0;
+
+		int changed = 0;
+		for (int i = 0; i < itemsIndex.Count; i++)
+		{
+			if (string.IsNullOrEmpty(itemsIndex[i])) continue;
+
+			string head = itemsIndex[i].Split(Sep, StringSplitOptions.None)[0];
+			int comma = head.LastIndexOf(',');
+			if (comma <= 0) continue;
+
+			string oldId = head.Substring(0, comma);
+			string[] parts = oldId.Split('.');
+			if (parts.Length < 15) continue;
+			if (!string.Equals(parts[13], code, StringComparison.OrdinalIgnoreCase)) continue;
+			if (string.Equals(parts[14], version, StringComparison.Ordinal)) continue;
+
+			parts[14] = version;
+			string newId = string.Join(".", parts);
+			itemsIndex[i] = newId + itemsIndex[i].Substring(comma);
+			RepointProductLinks(product2Items, oldId, newId);
+			changed++;
+		}
+
+		return changed;
 	}
 
 	// Moves every product2items reference from one identifier to another, matched whole rather
