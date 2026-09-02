@@ -54,7 +54,7 @@ public static class UpdateCopier
 		{ "netserver", new ProviderTarget { Provider = "netserver", Product = "windowsnetserver2003family",
 			Platform = "ver_platform_win32_nt", Major = "5", Minor = "2", Build = "3790", Edition = "ver_nt_server",
 			Suite = "", ServicePacks = new int[] { 0, 1, 2 } } },
-		{ "ie50x", new ProviderTarget { Provider = "ie50x", Product = "internetexplorer5x",
+		{ "ie50x", new ProviderTarget { Provider = "ie50x", Product = "internetexplorer50x",
 			Platform = "ver_platform_win32_windows", Major = "4", Minor = "10", Build = "", Edition = "", Suite = "",
 			ServicePacks = new int[0], IsInternetExplorer = true } },
 		{ "ie55x", new ProviderTarget { Provider = "ie55x", Product = "internetexplorer55x",
@@ -94,6 +94,14 @@ public static class UpdateCopier
 
 	// Splits an itemID that still carries its provider prefix.
 	// Returns false when it does not have the expected shape.
+	// Whether an identifier names one of the Internet Explorer products, which is how a copy
+	// between browser versions is told apart from a copy between operating systems.
+	private static bool IsInternetExplorerId(string[] parts)
+	{
+		return parts != null && parts.Length > 1 &&
+			parts[1].StartsWith("internetexplorer", StringComparison.OrdinalIgnoreCase);
+	}
+
 	public static bool TrySplit(string itemId, out string[] parts)
 	{
 		parts = (itemId ?? string.Empty).Split('.');
@@ -128,18 +136,30 @@ public static class UpdateCopier
 			return null;
 		}
 		string locale = parts[6];
+
+		// An Internet Explorer update is held once for each operating system that version of the
+		// browser runs on, so the operating system belongs to the update rather than to the
+		// provider. Replacing it with the provider's own would land every copy on one system, and
+		// the browser version is the only thing that really changes between these providers.
+		bool keepSystem = destination.IsInternetExplorer && IsInternetExplorerId(parts);
+
 		StringBuilder sb = new StringBuilder();
 		sb.Append(destination.Provider).Append('.');
 		sb.Append(destination.Product).Append('.');
-		sb.Append(destination.Platform).Append('.');
-		sb.Append(destination.Major).Append('.');
-		sb.Append(destination.Minor).Append('.');
+		sb.Append(keepSystem ? parts[2] : destination.Platform).Append('.');
+		sb.Append(keepSystem ? parts[3] : destination.Major).Append('.');
+		sb.Append(keepSystem ? parts[4] : destination.Minor).Append('.');
 		sb.Append("x86").Append('.');
 		sb.Append(locale).Append('.');
-		sb.Append(destination.Edition).Append('.');
-		sb.Append(destination.Suite).Append('.');
-		sb.Append(destination.Build).Append('.');
-		if (servicePack.HasValue)
+		sb.Append(keepSystem ? parts[7] : destination.Edition).Append('.');
+		sb.Append(keepSystem ? parts[8] : destination.Suite).Append('.');
+		sb.Append(keepSystem ? parts[9] : destination.Build).Append('.');
+		if (keepSystem)
+		{
+			// The service pack the source names is part of which system it is for.
+			sb.Append(parts[10]).Append('.').Append(parts[11]);
+		}
+		else if (servicePack.HasValue)
 		{
 			sb.Append(servicePack.Value.ToString(CultureInfo.InvariantCulture)).Append('.').Append('0');
 		}
@@ -206,6 +226,10 @@ public sealed class CopyOutcome
 	public int IndexEntriesAdded;
 	public int LocalesCovered;
 	public List<string> Skipped = new List<string>();
+
+	// Operating systems the source named that the destination does not serve, so nothing was
+	// written for them.
+	public List<string> SystemsNotSupported = new List<string>();
 }
 
 // Performs the copy itself. Every copied update gets fresh identifiers so it cannot collide with
@@ -288,6 +312,36 @@ public static class UpdateCopyEngine
 		return true;
 	}
 
+	// The operating system part of an identifier, which is the platform and its version.
+	private static string SystemOf(string itemId)
+	{
+		string[] parts = (itemId ?? string.Empty).Split('.');
+		if (parts.Length < 5) return null;
+
+		return parts[2] + "." + parts[3] + "." + parts[4];
+	}
+
+	// The operating systems a provider already has entries for.
+	private static HashSet<string> SystemsServedBy(ProviderData destination)
+	{
+		HashSet<string> systems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		if (destination == null || destination.ItemsIndex == null) return systems;
+
+		foreach (string line in destination.ItemsIndex)
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+
+			string head = line.Split(Sep, StringSplitOptions.None)[0];
+			int comma = head.LastIndexOf(',');
+			if (comma <= 0) continue;
+
+			string system = SystemOf(head.Substring(0, comma));
+			if (system != null) systems.Add(system);
+		}
+
+		return systems;
+	}
+
 	// Whether a product2items line already lists this exact reference.
 	private static bool HoldsReference(string line, string reference)
 	{
@@ -321,6 +375,11 @@ public static class UpdateCopyEngine
 	{
 		CopyOutcome outcome = new CopyOutcome();
 		HashSet<string> destGroups = GroupsDefinedBy(destination);
+
+		// The operating systems this provider already serves, taken from what it holds rather than
+		// from a fixed list, so it stays right as the inventory grows.
+		HashSet<string> destSystems = SystemsServedBy(destination);
+		HashSet<string> unsupported = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
 		Dictionary<string, string> itemByGuid = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 		foreach (string line in srcItems ?? new string[0])
@@ -442,6 +501,20 @@ public static class UpdateCopyEngine
 				{
 					string newItemId = UpdateCopier.Retarget(sourceItemId, destTarget, sp);
 					if (newItemId == null) continue;
+
+					// A browser version was not released for every operating system, so an update carried
+					// over from another version can name one this version never ran on. Writing it would
+					// leave an entry against a system the provider does not serve, which nothing can offer
+					// and the repair pass cannot make sense of.
+					if (destSystems.Count > 0)
+					{
+						string system = SystemOf(newItemId);
+						if (system != null && !destSystems.Contains(system))
+						{
+							if (unsupported.Add(system)) outcome.SystemsNotSupported.Add(system);
+							continue;
+						}
+					}
 					string newIndexLine = newItemId + "," + newItemGuid + "@|";
 					if (!existingIndex.Add(newIndexLine)) continue;
 					destination.ItemsIndex.Add(newIndexLine);

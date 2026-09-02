@@ -270,6 +270,11 @@ public class frmItemList : Form
 				}
 			}
 			u_items = u_items1.ToArray();
+
+			// How many languages each update is offered in, gathered once. Working this out inside
+			// the loop below would walk the whole index for every update, which is millions of
+			// comparisons on the larger inventories.
+			Dictionary<string, HashSet<string>> localesByCode = LocalesByCode();
 			
 			// Use a lock for thread-safe list access
 			object lockObj = new object();
@@ -295,16 +300,26 @@ public class frmItemList : Form
 						// should, and every row gathered here is one an edit to this update would rewrite.
 						if (CodeOfItemsLine(text2) == _line)
 						{
-							num++;
 							list.Add(text2);
 							list2.Add(j);
 							array2 = text2.Split(new string[1] { "@|" }, StringSplitOptions.None);
 						}
 					}
+					// The languages the update is offered in rather than the number of rows it occupies.
+					// An update that serves every language from one download has a single row covering
+					// them all, so counting rows read 1 no matter how many languages it reached.
+					HashSet<string> spoken;
+					num = localesByCode.TryGetValue(_line, out spoken) ? spoken.Count : list.Count;
+
+					// Fewer rows than languages means the languages share a row, and a shared row means one
+					// file serving all of them.
+					bool oneFileForAll = num > list.Count;
+
 					Update update = new Update
 					{
 						itemindexes = list2.ToArray(),
-						itemlines = list.ToArray()
+						itemlines = list.ToArray(),
+						sharesOneFile = oneFileForAll
 					};
 					
 					// Validate array2 has minimum required elements
@@ -491,10 +506,27 @@ public class frmItemList : Form
 			// An update brought in from a log arrives without a detection rule, so it is shown in bold
 			// until one is filled in. It cannot be offered to a machine in the meantime, because the
 			// placeholder rule names a registry key that never exists.
-			if (update.itemlines != null &&
-				update.itemlines.Any(l => LogImportNewItems.NeedsAttention(l)))
+			bool needsAttention = update.itemlines != null &&
+				update.itemlines.Any(l => LogImportNewItems.NeedsAttention(l));
+			if (needsAttention)
 			{
 				listViewItem.Font = new Font(lstItems.Font, FontStyle.Bold);
+			}
+
+			// One file serving every language is held as a single row covering them all, so the count
+			// is shown in bold there. It reads as the number of languages that one file reaches rather
+			// than a count of separate downloads.
+			if (update.sharesOneFile && listViewItem.SubItems.Count > LanguageCountColumn)
+			{
+				// Each cell has to carry its own font once the row stops lending its style to them,
+				// otherwise a row bolded for having no detection rule would lose it everywhere else.
+				listViewItem.UseItemStyleForSubItems = false;
+				Font ordinary = needsAttention ? listViewItem.Font : lstItems.Font;
+				foreach (ListViewItem.ListViewSubItem cell in listViewItem.SubItems)
+				{
+					cell.Font = ordinary;
+				}
+				listViewItem.SubItems[LanguageCountColumn].Font = new Font(lstItems.Font, FontStyle.Bold);
 			}
 
 			// Anything the last import added or corrected is tinted, so it is obvious which rows
@@ -502,6 +534,14 @@ public class frmItemList : Form
 			if (LogImportHighlight.WasJustImported(provider, update.code))
 			{
 				listViewItem.BackColor = Color.FromArgb(255, 249, 196);
+				if (!listViewItem.UseItemStyleForSubItems)
+				{
+					// The row no longer lends its colour to the cells either, so each one is tinted.
+					foreach (ListViewItem.ListViewSubItem cell in listViewItem.SubItems)
+					{
+						cell.BackColor = listViewItem.BackColor;
+					}
+				}
 			}
 			
 			// Thread-safe add to list
@@ -765,6 +805,41 @@ catch (Exception ex)
 	// The update code an items row carries, which is the field between the item identifier and
 	// the first separator. Returns null for a row that is empty or malformed, which then
 	// matches no code at all.
+	// The languages each update is indexed under. An itemsindex id is dot separated with the
+	// locale at position 6 and the code at 13, and one language appears more than once when an
+	// update is offered for several operating system targets, so they are gathered as a set.
+	private Dictionary<string, HashSet<string>> LocalesByCode()
+	{
+		Dictionary<string, HashSet<string>> byCode =
+			new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+		if (l_itemsindex == null) return byCode;
+
+		foreach (string line in l_itemsindex)
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+
+			string head = line.Split(FieldSeparator, StringSplitOptions.None)[0];
+			int comma = head.LastIndexOf(',');
+			if (comma <= 0) continue;
+
+			string[] parts = head.Substring(0, comma).Split('.');
+			if (parts.Length < 15) continue;
+
+			HashSet<string> locales;
+			if (!byCode.TryGetValue(parts[13], out locales))
+			{
+				locales = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+				byCode[parts[13]] = locales;
+			}
+			locales.Add(parts[6]);
+		}
+
+		return byCode;
+	}
+
+	// The L. Count column, fourth in the list after the name, code and prerequisites.
+	private const int LanguageCountColumn = 3;
+
 	private static string CodeOfItemsLine(string itemsLine)
 	{
 		if (string.IsNullOrEmpty(itemsLine)) return null;

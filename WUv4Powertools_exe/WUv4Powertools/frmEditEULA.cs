@@ -170,11 +170,8 @@ public class frmEditEULA : Form
 					? $"http://download.windowsupdate.com{currentEULA}"
 					: $"http://download.windowsupdate.com/msdownload/update/v3/static/RTF/{currentEULA}";
 				radOldType.Checked = true;
-				string[] pathParts = currentEULA.Split('/');
-				if (pathParts.Length > 1)
-				{
-					txtEULACode.Text = pathParts[1].Replace(".htm", "");
-				}
+				// The file name is the last part of the path, whatever sits in front of it.
+				txtEULACode.Text = ArticleOnly(currentEULA);
 			}
 			else if (currentEULA.Contains("support.microsoft.com/?kbid=") || currentEULA.Contains("support.microsoft.com/?id="))
 			{
@@ -200,6 +197,25 @@ public class frmEditEULA : Form
 		}
 	}
 	
+	// The article number on its own, with any folders in front of it and any .htm on the end
+	// taken off. The old style address is built by putting the language in front of this, so
+	// anything left over here would be repeated in the address that comes out.
+	private static string ArticleOnly(string value)
+	{
+		if (string.IsNullOrEmpty(value)) return string.Empty;
+
+		string text = value.Trim();
+		int slash = text.LastIndexOf('/');
+		if (slash >= 0) text = text.Substring(slash + 1);
+
+		if (text.EndsWith(".htm", StringComparison.OrdinalIgnoreCase))
+		{
+			text = text.Substring(0, text.Length - 4);
+		}
+
+		return text;
+	}
+
 	private void btnSave_Click(object sender, EventArgs e)
 	{
 		if (string.IsNullOrWhiteSpace(txtEULACode.Text))
@@ -213,7 +229,7 @@ public class frmEditEULA : Form
 		// support.microsoft.com/?kbid=http://go.microsoft.com/fwlink/?LinkId=59989. That is how a
 		// fwlink address, which loads as Custom with the whole URL in the box, turned into rubbish
 		// the moment the type was switched and saved.
-		if (radNewType.Checked)
+		if (!radCustom.Checked)
 		{
 			string entered = txtEULACode.Text.Trim();
 			if (entered.IndexOf("://", StringComparison.Ordinal) >= 0 || entered.IndexOf('/') >= 0)
@@ -292,8 +308,10 @@ public class frmEditEULA : Form
 				
 				if (radOldType.Checked)
 				{
-					// Old type: the article number under the language, stored as a relative path.
-					newEULAForItemstring = $"{lang}/{txtEULACode.Text}.htm";
+					// Old type: the article number under the language, stored as a relative path. Only the
+					// number is taken from the box, so a value that already carries a language folder does
+					// not gain a second one and turn into en/en/4316.htm.
+					newEULAForItemstring = $"{lang}/{ArticleOnly(txtEULACode.Text)}.htm";
 				}
 				else if (radNewType.Checked)
 				{

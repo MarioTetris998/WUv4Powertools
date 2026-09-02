@@ -1,4 +1,4 @@
-namespace WUv4Powertools;
+﻿namespace WUv4Powertools;
 
 public class Update
 {
@@ -24,6 +24,10 @@ public class Update
 
 	// New property to track custom order within group
 	public int customOrder = -1;
+
+	// Whether one file serves every language this update reaches, which is held as a single
+	// row covering them all rather than a row for each language.
+	public bool sharesOneFile;
 
 	// Property to identify if this is a driver update
 	public bool isDriver = false;

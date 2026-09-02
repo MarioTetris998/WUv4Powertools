@@ -713,6 +713,31 @@ public class frmAddUpdate : Form
 		// This method is no longer needed but keeping it for compatibility
 	}
 
+	// The identifier of the row an index entry should point at. One download shared by every
+	// language has a single row, so that row answers for all of them. One download per language
+	// has a row each, and the entry has to name the row for its own language.
+	private static string RowGuidFor(string indexId, bool multilanguage, string[] langs,
+		string[] guids, Guid single)
+	{
+		string fallback = single.ToString().ToUpperInvariant();
+		if (!multilanguage || langs == null || guids == null) return fallback;
+
+		// The language is found by matching rather than by counting fields, so a change to the
+		// shape of an identifier cannot quietly pick the wrong one.
+		string[] parts = (indexId ?? string.Empty).Split('.');
+		foreach (string part in parts)
+		{
+			if (part.Length == 0) continue;
+
+			for (int i = 0; i < langs.Length && i < guids.Length; i++)
+			{
+				if (string.Equals(langs[i], part, StringComparison.OrdinalIgnoreCase)) return guids[i];
+			}
+		}
+
+		return fallback;
+	}
+
 	private List<string> GetSelectedIEOSes()
 	{
 		List<string> selectedOSes = new List<string>();
@@ -1358,7 +1383,12 @@ public class frmAddUpdate : Form
 					{
 						throw new Exception($"CodeIndex access out of bounds: attempting to access index {j} in collection of count {codeIndex.Count}");
 					}
-					frmItemList.l_itemsindex[targetIndex] = $"{codeIndex[j]},{fileGuid.ToString().ToUpper()}@|";
+					// With one download per language each language has its own row under its own identifier,
+					// so an entry has to name the identifier for the language it is for. Naming a single one
+					// for all of them left every entry pointing at a row that was not there, which is what
+					// the provider check reports, and repairing the provider then deleted them.
+					frmItemList.l_itemsindex[targetIndex] =
+						$"{codeIndex[j]},{RowGuidFor(codeIndex[j], _chkMultilanguage, l_md_langs, l_md_guids, fileGuid)}@|";
 				}
 				int num4 = (Convert.ToInt16(!_chkCritical) + 1) * 2;
 				// Format timestamp with full precision: YYYY-MM-DDTHH:MM:SS.FFFF
@@ -1449,7 +1479,7 @@ public class frmAddUpdate : Form
 					}
 					
 					string langItemEntry = string.Format(
-						"{0},{1}_{2}@|com_microsoft@|{3}@|{4}@|{5}@|<installation order=\"0\" installerType=\"{6}\" exclusive=\"{7}\" needsReboot=\"{8}\"><size>{9}</size><codeBase href=\"{10}\" crc=\"40146758A8239579649EC1BBAF5AA83EEE998180\" name=\"{11}\"><size>{9}</size></codeBase>{12}</installation>@|1@|{13}@|{9}@|{14}@|0@|0@|@|-768",
+						"{0},{1}@|com_microsoft@|{3}@|{4}@|{5}@|<installation order=\"0\" installerType=\"{6}\" exclusive=\"{7}\" needsReboot=\"{8}\"><size>{9}</size><codeBase href=\"{10}\" crc=\"40146758A8239579649EC1BBAF5AA83EEE998180\" name=\"{11}\"><size>{9}</size></codeBase>{12}</installation>@|1@|{13}@|{9}@|{14}@|0@|0@|@|-768",
 						langFileGuid, _txtUpdCode, langCode, langGuid.ToString().ToUpper(), _cmbGroup, _txtDetection,
 						_installerType, Convert.ToInt16(_chkExclusive), Convert.ToInt16(_chkRebootReq),
 						langContentLength, langDLink, langFilename, langCommandXml, num4, text3);

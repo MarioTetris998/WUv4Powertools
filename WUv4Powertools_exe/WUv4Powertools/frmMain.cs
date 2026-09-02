@@ -755,6 +755,20 @@ public class frmMain : Form
 			sb.AppendLine();
 			sb.AppendLine(outcome.Skipped.Count + " produced nothing and were skipped.");
 		}
+
+		// A browser version was not released for every operating system, so part of what was
+		// copied can have nowhere to go. Saying so is better than leaving the update looking
+		// as though it covers systems it does not.
+		if (outcome.SystemsNotSupported.Count > 0)
+		{
+			sb.AppendLine();
+			sb.AppendLine("Nothing was written for these systems, because " + dest.provider +
+				" holds no updates for them:");
+			foreach (string system in outcome.SystemsNotSupported)
+			{
+				sb.AppendLine("    " + system);
+			}
+		}
 		sb.AppendLine();
 		sb.AppendLine("Nothing is on disk yet. Save this provider to keep it, or use Undo to take it back.");
 		MessageBox.Show(sb.ToString(), "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
