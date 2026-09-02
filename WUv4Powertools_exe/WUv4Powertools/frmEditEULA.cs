@@ -137,12 +137,12 @@ public class frmEditEULA : Form
 					// Split by @| to get the parts
 					string[] parts = line.Split(new string[] { "@|" }, StringSplitOptions.None);
 					
-					// A row is <provider>.<guid>,<title>@|<description>@|<eula>@|@|<details>, so the
-					// licence is the third field. This read the fifth, which is the more information
-					// link, so this dialog has been showing and rewriting that instead all along.
-					if (parts.Length > 2)
+					// A row is <provider>.<guid>,<title>@|<description>@|<eula>@|@|<details>. This is the
+					// fifth field, the one holding the article link, which is what the three types below
+					// describe. The third field holds the licence itself and is left to the importer.
+					if (parts.Length > 4)
 					{
-						eulaFromItemstring = parts[2];
+						eulaFromItemstring = parts[4];
 						break;
 					}
 				}
@@ -165,10 +165,10 @@ public class frmEditEULA : Form
 			if (!currentEULA.StartsWith("http://") && !currentEULA.StartsWith("https://"))
 			{
 				// Shown against the host it is served from. A value that already carries its own path
-				// only needs the host, while a bare "en/5759.htm" is one of the older relative forms.
+				// only needs the host in front of it.
 				txtCurrentEULA.Text = currentEULA.StartsWith("/")
 					? $"http://download.windowsupdate.com{currentEULA}"
-					: $"http://download.windowsupdate.com/msdownload/update/v3/static/eula/{currentEULA}";
+					: $"http://download.windowsupdate.com/msdownload/update/v3/static/RTF/{currentEULA}";
 				radOldType.Checked = true;
 				string[] pathParts = currentEULA.Split('/');
 				if (pathParts.Length > 1)
@@ -202,8 +202,7 @@ public class frmEditEULA : Form
 	
 	private void btnSave_Click(object sender, EventArgs e)
 	{
-		// The standard licence is one fixed file per language, so it needs nothing typed in.
-		if (!radOldType.Checked && string.IsNullOrWhiteSpace(txtEULACode.Text))
+		if (string.IsNullOrWhiteSpace(txtEULACode.Text))
 		{
 			MessageBox.Show("Please enter a EULA code or URL.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 			return;
@@ -293,11 +292,8 @@ public class frmEditEULA : Form
 				
 				if (radOldType.Checked)
 				{
-					// The licence the service really served, which is the same file for every update and
-					// differs only by language. What used to be written here put the article number in
-					// place of the file name and pointed at the RTF folder, which holds the description
-					// text rather than any licence, so the address led nowhere.
-					newEULAForItemstring = $"{lang}/corp_eula.htm";
+					// Old type: the article number under the language, stored as a relative path.
+					newEULAForItemstring = $"{lang}/{txtEULACode.Text}.htm";
 				}
 				else if (radNewType.Checked)
 				{
@@ -345,11 +341,9 @@ public class frmEditEULA : Form
 							// Split by @| to get the parts
 							string[] parts = line.Split(new string[] { "@|" }, StringSplitOptions.None);
 							
-							// The licence is the third field. Writing the fifth put every change into the
-							// more information link and left the licence untouched.
-							if (parts.Length > 2)
+							if (parts.Length > 4)
 							{
-								parts[2] = newEULAForItemstring;
+								parts[4] = newEULAForItemstring;
 								frmItemList.l_itemstrings[i] = string.Join("@|", parts);
 								
 								// Update the Update object too (find the matching language)
@@ -477,7 +471,7 @@ public class frmEditEULA : Form
 		this.radOldType.Name = "radOldType";
 		this.radOldType.Size = new Size(600, 17);
 		this.radOldType.TabIndex = 0;
-		this.radOldType.Text = "Standard licence ({lang}/corp_eula.htm)";
+		this.radOldType.Text = "Old Type (e.g., http://download.windowsupdate.com/msdownload/update/v3/static/RTF/{lang}/{code}.htm)";
 		this.radOldType.UseVisualStyleBackColor = true;
 		
 		// radNewType

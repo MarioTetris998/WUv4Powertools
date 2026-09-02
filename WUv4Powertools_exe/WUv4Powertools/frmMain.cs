@@ -725,6 +725,11 @@ public class frmMain : Form
 		data.ItemStringsIndex.AddRange(dest.l_itemstringsindex ?? new string[0]);
 		data.Product2Items.AddRange(dest.l_product2items ?? new string[0]);
 
+		// The categories this inventory offers. Categories are numbered per provider and they do
+		// not all offer the same ones, so an update carrying one the destination never defines
+		// is moved to a category it does.
+		data.ProductGroupStrings.AddRange(dest.l_productgroupstrings ?? new string[0]);
+
 		CopyOutcome outcome = UpdateCopyEngine.Copy(UpdateClipboard.SourceProvider,
 			UpdateClipboard.Items, UpdateClipboard.ItemsIndex, UpdateClipboard.ItemStrings,
 			UpdateClipboard.ItemStringsIndex, UpdateClipboard.Codes, data, target, null);

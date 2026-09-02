@@ -194,6 +194,10 @@ public sealed class ProviderData
 	public List<string> ItemStrings = new List<string>();
 	public List<string> ItemStringsIndex = new List<string>();
 	public List<string> Product2Items = new List<string>();
+
+	// productgroupstrings.txt for the destination, which names the categories it offers.
+	// Left empty when it is not to hand, and then a copied update keeps its own category.
+	public List<string> ProductGroupStrings = new List<string>();
 }
 
 public sealed class CopyOutcome
@@ -219,10 +223,89 @@ public static class UpdateCopyEngine
 	}
 
 	// The product2items key is the itemID with the trailing namespace and code removed.
+	// The operating system a product2items line is for, which is the identifier with the
+	// publisher, code and version taken off. The separating dot belongs to the publisher that
+	// follows it, not to this key. Keeping it added a thirteenth field to a key that has
+	// twelve, so the key never matched the line already there: every copy started a second
+	// line for the same operating system, and the client reads the first, which is why a
+	// copied update was never offered.
+	// The category a copied update should carry in the destination. Its own is kept whenever the
+	// destination defines it, so nothing is moved without reason.
+	private static string GroupFor(string sourceGroup, ProviderData destination, HashSet<string> destGroups)
+	{
+		if (destGroups == null || destGroups.Count == 0) return sourceGroup;
+		if (string.IsNullOrEmpty(sourceGroup) || destGroups.Contains(sourceGroup)) return sourceGroup;
+
+		string commonest = null;
+		int best = -1;
+		Dictionary<string, int> tally = new Dictionary<string, int>(StringComparer.Ordinal);
+		foreach (string line in destination.Items)
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+
+			string[] parts = line.Split(Sep, StringSplitOptions.None);
+			if (parts.Length <= 3 || string.IsNullOrEmpty(parts[3])) continue;
+			if (!destGroups.Contains(parts[3])) continue;
+
+			int n;
+			tally.TryGetValue(parts[3], out n);
+			tally[parts[3]] = ++n;
+			if (n > best) { best = n; commonest = parts[3]; }
+		}
+
+		return commonest ?? sourceGroup;
+	}
+
+	// The categories named in the destination's productgroupstrings, which are the only ones it
+	// can show. Rows read "<provider>.<osTarget>.<group>.<locale>,<text>".
+	private static HashSet<string> GroupsDefinedBy(ProviderData destination)
+	{
+		HashSet<string> groups = new HashSet<string>(StringComparer.Ordinal);
+		if (destination == null || destination.ProductGroupStrings == null) return groups;
+
+		foreach (string line in destination.ProductGroupStrings)
+		{
+			if (string.IsNullOrEmpty(line)) continue;
+
+			string head = line.Split(',')[0];
+			string[] parts = head.Split('.');
+			for (int i = 0; i < parts.Length; i++)
+			{
+				if (parts[i].Length == 5 && IsAllDigits(parts[i])) groups.Add(parts[i]);
+			}
+		}
+
+		return groups;
+	}
+
+	private static bool IsAllDigits(string text)
+	{
+		foreach (char c in text)
+		{
+			if (c < '0' || c > '9') return false;
+		}
+
+		return true;
+	}
+
+	// Whether a product2items line already lists this exact reference.
+	private static bool HoldsReference(string line, string reference)
+	{
+		if (string.IsNullOrEmpty(line)) return false;
+
+		string[] refs = line.Split(',');
+		for (int i = 1; i < refs.Length; i++)
+		{
+			if (string.Equals(refs[i], reference, StringComparison.OrdinalIgnoreCase)) return true;
+		}
+
+		return false;
+	}
+
 	private static string ProductKeyOf(string itemId)
 	{
 		int cm = itemId.IndexOf(".com_", StringComparison.OrdinalIgnoreCase);
-		return (cm > 0) ? itemId.Substring(0, cm + 1) : null;
+		return (cm > 0) ? itemId.Substring(0, cm) : null;
 	}
 
 	public static CopyOutcome Copy(
@@ -237,6 +320,7 @@ public static class UpdateCopyEngine
 		IList<int> chosenServicePacks)
 	{
 		CopyOutcome outcome = new CopyOutcome();
+		HashSet<string> destGroups = GroupsDefinedBy(destination);
 
 		Dictionary<string, string> itemByGuid = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 		foreach (string line in srcItems ?? new string[0])
@@ -322,6 +406,11 @@ public static class UpdateCopyEngine
 
 					string[] fields = sourceItem.Split(Sep, StringSplitOptions.None);
 					fields[0] = newItemGuid + "," + code;
+
+					// Categories are numbered per provider and they do not all offer the same ones.
+					// An update carrying a category the destination never defines lands in nothing
+					// the client can show, so it is put in the one the destination uses most.
+					if (fields.Length > 3) fields[3] = GroupFor(fields[3], destination, destGroups);
 					if (fields.Length > 2) fields[2] = newLangGuid;
 					destination.Items.Add(string.Join("@|", fields));
 				}
@@ -366,7 +455,9 @@ public static class UpdateCopyEngine
 					int lineIndex;
 					if (productLine.TryGetValue(productKey, out lineIndex))
 					{
-						if (destination.Product2Items[lineIndex].IndexOf(valueId, StringComparison.OrdinalIgnoreCase) < 0)
+						// Weighed against whole references. Looking for the text anywhere in the line also
+					// finds it inside a longer reference that merely starts the same way.
+					if (!HoldsReference(destination.Product2Items[lineIndex], valueId))
 						{
 							destination.Product2Items[lineIndex] = destination.Product2Items[lineIndex] + "," + valueId;
 						}
