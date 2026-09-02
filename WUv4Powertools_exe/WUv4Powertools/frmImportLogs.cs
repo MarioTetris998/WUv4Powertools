@@ -814,11 +814,21 @@ public class frmImportLogs : Form
 			{
 				sb.AppendLine(string.Format(
 					"Corrections applied: {0} GUIDs, {1} titles, {2} versions, {3} file names, {4} dates, " +
-					"{5} code spellings, {6} restart flags, {7} installer types.",
+					"{5} code spellings, {6} restart flags, {7} installer types, {8} links.",
 					summary.GuidsCorrected, summary.TitlesCorrected, summary.VersionsCorrected,
 					summary.FileNamesCorrected, summary.DatesCorrected, summary.CodesRecased,
-					summary.RebootFlagsCorrected, summary.CommandTypesCorrected));
+					summary.RebootFlagsCorrected, summary.CommandTypesCorrected,
+					summary.LinksCorrected));
 			}
+		}
+
+		// Putting an update onto one row changes what the list shows for it, so it is said
+		// plainly rather than left to be noticed.
+		if (summary.RowsMerged > 0 || summary.LanguagesSharingAFile > 0)
+		{
+			sb.AppendLine(string.Format(
+				"{0} rows held a download another row of the same update already had, so those updates now use one address for every language. {1} languages were given a row that was already there.",
+				summary.RowsMerged, summary.LanguagesSharingAFile));
 		}
 
 		if (summary.WithoutPostedDate > 0)

@@ -506,7 +506,7 @@ public static class LogImportEngine
 				// The licence and the more information address are stated by the source for this exact
 				// language, and both are held per language, so a row carrying another language's is put
 				// right. These used to be written only when the title happened to change as well.
-				c.Fix.Eula = LogImportNewItems.LinkDiffers(EulaFor(c, locale), index.EulaForStringGuid(stringGuid));
+				c.Fix.Eula = LogImportNewItems.LinkDiffers(StatedEula(c), index.EulaForStringGuid(stringGuid));
 				c.Fix.Details = LogImportNewItems.LinkDiffers(c.DetailsHref, index.DetailsForStringGuid(stringGuid));
 
 				// One file serving several languages is a single row, and a row can carry only one
@@ -1286,7 +1286,7 @@ public static class LogImportEngine
 				? null
 				: index.StringGuidFor(langGuidForLinks, locale);
 			if (linkGuid != null && ReplaceLinks(strings, store.Name, linkGuid,
-				c.Fix.Eula ? EulaFor(c, locale) : null, c.Fix.Details ? c.DetailsHref : null))
+				c.Fix.Eula ? StatedEula(c) : null, c.Fix.Details ? c.DetailsHref : null))
 			{
 				summary.LinksCorrected++;
 				changed = true;
@@ -1517,6 +1517,17 @@ public static class LogImportEngine
 	// neither: a bare "cs/eula.htm" with no path in front of it, thrown away from the address
 	// the file had already supplied.
 	private const string EulaFolder = "/msdownload/update/v3/static/eula/";
+
+	// The licence the source states, in the form the dictionaries hold, or null when it states
+	// none. Correcting a row uses this rather than the one below: an update the source says
+	// nothing about must keep the licence it has, not be given a made up one.
+	private static string StatedEula(ImportCandidate c)
+	{
+		if (c == null || string.IsNullOrEmpty(c.EulaHref)) return null;
+
+		int at = c.EulaHref.IndexOf(EulaFolder, StringComparison.OrdinalIgnoreCase);
+		return at < 0 ? c.EulaHref : c.EulaHref.Substring(at + EulaFolder.Length);
+	}
 
 	private static string EulaFor(ImportCandidate c, string locale)
 	{
