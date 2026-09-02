@@ -747,7 +747,16 @@ public class frmMain : Form
 
 		if (outcome.IndexEntriesAdded == 0)
 		{
-			MessageBox.Show("Nothing was pasted. The copied updates produced no entries for " + dest.provider + ".", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
+			string why = "Nothing was pasted. The copied updates produced no entries for " + dest.provider + ".";
+			if (outcome.SystemsNotSupported.Count > 0)
+			{
+				why += "\n\nThey are for these systems, which " + dest.provider + " was never released for:\n";
+				foreach (string system in outcome.SystemsNotSupported)
+				{
+					why += "    " + system + "\n";
+				}
+			}
+			MessageBox.Show(why, "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
 			return;
 		}
 
@@ -774,7 +783,7 @@ public class frmMain : Form
 		{
 			sb.AppendLine();
 			sb.AppendLine("Nothing was written for these systems, because " + dest.provider +
-				" holds no updates for them:");
+				" was never released for them:");
 			foreach (string system in outcome.SystemsNotSupported)
 			{
 				sb.AppendLine("    " + system);

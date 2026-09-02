@@ -30,6 +30,10 @@ public static class UpdateCopier
 		public int[] ServicePacks;
 		public bool IsInternetExplorer;
 
+		// The operating systems this browser version was released for, as platform and version.
+		// Empty for an operating system inventory, which serves the one system it is named for.
+		public string[] Systems;
+
 		public string Describe()
 		{
 			return Product + " (" + Platform + " " + Major + "." + Minor + ")";
@@ -56,13 +60,16 @@ public static class UpdateCopier
 			Suite = "", ServicePacks = new int[] { 0, 1, 2 } } },
 		{ "ie50x", new ProviderTarget { Provider = "ie50x", Product = "internetexplorer50x",
 			Platform = "ver_platform_win32_windows", Major = "4", Minor = "10", Build = "", Edition = "", Suite = "",
-			ServicePacks = new int[0], IsInternetExplorer = true } },
+			ServicePacks = new int[0], IsInternetExplorer = true,
+			Systems = new string[] { "ver_platform_win32_windows.4.10", "ver_platform_win32_windows.4.90", "ver_platform_win32_nt.5.0" } } },
 		{ "ie55x", new ProviderTarget { Provider = "ie55x", Product = "internetexplorer55x",
 			Platform = "ver_platform_win32_windows", Major = "4", Minor = "10", Build = "", Edition = "", Suite = "",
-			ServicePacks = new int[0], IsInternetExplorer = true } },
+			ServicePacks = new int[0], IsInternetExplorer = true,
+			Systems = new string[] { "ver_platform_win32_windows.4.10", "ver_platform_win32_windows.4.90", "ver_platform_win32_nt.5.0" } } },
 		{ "ie60x", new ProviderTarget { Provider = "ie60x", Product = "internetexplorer6x",
 			Platform = "ver_platform_win32_windows", Major = "4", Minor = "10", Build = "", Edition = "", Suite = "",
-			ServicePacks = new int[0], IsInternetExplorer = true } }
+			ServicePacks = new int[0], IsInternetExplorer = true,
+			Systems = new string[] { "ver_platform_win32_windows.4.10", "ver_platform_win32_windows.4.90", "ver_platform_win32_nt.5.0", "ver_platform_win32_nt.5.1", "ver_platform_win32_nt.5.2" } } }
 	};
 
 	public static bool IsKnown(string provider)
@@ -322,27 +329,6 @@ public static class UpdateCopyEngine
 		return parts[2] + "." + parts[3] + "." + parts[4];
 	}
 
-	// The operating systems a provider already has entries for.
-	private static HashSet<string> SystemsServedBy(ProviderData destination)
-	{
-		HashSet<string> systems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-		if (destination == null || destination.ItemsIndex == null) return systems;
-
-		foreach (string line in destination.ItemsIndex)
-		{
-			if (string.IsNullOrEmpty(line)) continue;
-
-			string head = line.Split(Sep, StringSplitOptions.None)[0];
-			int comma = head.LastIndexOf(',');
-			if (comma <= 0) continue;
-
-			string system = SystemOf(head.Substring(0, comma));
-			if (system != null) systems.Add(system);
-		}
-
-		return systems;
-	}
-
 	// Whether a product2items line already lists this exact reference.
 	private static bool HoldsReference(string line, string reference)
 	{
@@ -377,9 +363,15 @@ public static class UpdateCopyEngine
 		CopyOutcome outcome = new CopyOutcome();
 		HashSet<string> destGroups = GroupsDefinedBy(destination);
 
-		// The operating systems this provider already serves, taken from what it holds rather than
-		// from a fixed list, so it stays right as the inventory grows.
-		HashSet<string> destSystems = SystemsServedBy(destination);
+		// The operating systems this browser version was released for. Taking them from what the
+		// inventory already holds instead refused the first update for any system it had none for,
+		// which is the very thing a copy is for: an inventory holding only Windows 2000 entries
+		// would turn away every Windows 98 update rather than gaining one.
+		HashSet<string> destSystems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		if (destTarget != null && destTarget.Systems != null)
+		{
+			foreach (string system in destTarget.Systems) destSystems.Add(system);
+		}
 		HashSet<string> unsupported = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
 		Dictionary<string, string> itemByGuid = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -503,10 +495,9 @@ public static class UpdateCopyEngine
 					string newItemId = UpdateCopier.Retarget(sourceItemId, destTarget, sp);
 					if (newItemId == null) continue;
 
-					// A browser version was not released for every operating system, so an update carried
-					// over from another version can name one this version never ran on. Writing it would
-					// leave an entry against a system the provider does not serve, which nothing can offer
-					// and the repair pass cannot make sense of.
+					// A browser version was not released for every operating system, so an update can name
+					// one it never ran on. Writing it would leave an entry against a system the browser
+					// cannot be running on, which nothing would ever be offered for.
 					if (destSystems.Count > 0)
 					{
 						string system = SystemOf(newItemId);
