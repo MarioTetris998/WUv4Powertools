@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -77,6 +77,30 @@ public sealed class StringProvenance
 	public void Save()
 	{
 		if (!dirty) return;
+		// Whatever is on disk is read again and kept. This store may have been loaded while the
+		// file was unreadable, and another session may have added to it since; writing only
+		// what this run holds would drop those records. That is not a harmless loss, because
+		// repairing strings would then treat a genuine string as translated and overwrite it.
+		HashSet<string> merged = new HashSet<string>(authentic, StringComparer.OrdinalIgnoreCase);
+		try
+		{
+			if (File.Exists(path))
+			{
+				foreach (string raw in File.ReadAllLines(path))
+				{
+					string line = raw.Trim();
+					if (line.Length == 0 || line.StartsWith("#")) continue;
+					merged.Add(line);
+				}
+			}
+		}
+		catch
+		{
+			// The file is there but cannot be read. Replacing it with the little this run knows
+			// would throw away the rest, so it is left exactly as it is.
+			return;
+		}
+
 		try
 		{
 			StringBuilder sb = new StringBuilder();
@@ -84,7 +108,7 @@ public sealed class StringProvenance
 			sb.AppendLine("# One provider and string GUID per line. Repairing strings leaves these alone.");
 			sb.AppendLine("# Delete a line to let the repair treat that string as translated again.");
 			sb.AppendLine();
-			List<string> ordered = new List<string>(authentic);
+			List<string> ordered = new List<string>(merged);
 			ordered.Sort(StringComparer.OrdinalIgnoreCase);
 			foreach (string entry in ordered)
 			{

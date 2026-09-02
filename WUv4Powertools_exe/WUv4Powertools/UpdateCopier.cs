@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
@@ -286,7 +286,14 @@ public static class UpdateCopyEngine
 			string token = "com_microsoft." + code + ".";
 			// One shared identifier for the update's string set across every locale.
 			string newLangGuid = Guid.NewGuid().ToString().ToUpperInvariant();
-			Dictionary<string, string> newGuidByLocale = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+			// Keyed by the row it came from rather than by locale. An update whose languages all share
+			// one download has a single row in the source, and minting one per locale would turn that
+			// into a row for every language while every copy still pointed at the same file.
+			Dictionary<string, string> newGuidBySourceRow = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+			// Strings belong to a language, not to a file, so each locale still gets its own set even
+			// when they all share one row.
+			HashSet<string> localesDone = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 			bool copiedAnything = false;
 
 			foreach (string idxLine in srcItemsIndex ?? new string[0])
@@ -302,24 +309,28 @@ public static class UpdateCopyEngine
 				string locale = LocaleOf(sourceItemId);
 				if (locale == null) continue;
 
-				// One new item identifier per locale, reused across that locale's platform entries.
-				string newItemGuid;
-				if (!newGuidByLocale.TryGetValue(locale, out newItemGuid))
-				{
-					string sourceItem;
-					if (!itemByGuid.TryGetValue(sourceGuid, out sourceItem)) continue;
+				string sourceItem;
+				if (!itemByGuid.TryGetValue(sourceGuid, out sourceItem)) continue;
 
+				// One new row for each row in the source, so an update sharing one download across every
+				// language stays a single row here too.
+				string newItemGuid;
+				if (!newGuidBySourceRow.TryGetValue(sourceGuid, out newItemGuid))
+				{
 					newItemGuid = Guid.NewGuid().ToString().ToUpperInvariant();
-					newGuidByLocale[locale] = newItemGuid;
+					newGuidBySourceRow[sourceGuid] = newItemGuid;
 
 					string[] fields = sourceItem.Split(Sep, StringSplitOptions.None);
 					fields[0] = newItemGuid + "," + code;
 					if (fields.Length > 2) fields[2] = newLangGuid;
 					destination.Items.Add(string.Join("@|", fields));
+				}
 
-					// Carry the titles and descriptions over under fresh identifiers.
-					string sourceLangGuid = (sourceItem.Split(Sep, StringSplitOptions.None).Length > 2)
-						? sourceItem.Split(Sep, StringSplitOptions.None)[2].Trim() : null;
+				// Carry the titles and descriptions over under fresh identifiers, once per language.
+				if (localesDone.Add(locale))
+				{
+					string[] sourceFields = sourceItem.Split(Sep, StringSplitOptions.None);
+					string sourceLangGuid = sourceFields.Length > 2 ? sourceFields[2].Trim() : null;
 					string setGuid;
 					if (sourceLangGuid != null && setGuidByLocaleLang.TryGetValue(locale + "|" + sourceLangGuid, out setGuid))
 					{

@@ -289,7 +289,11 @@ public class frmItemList : Form
 					for (int j = 0; j < l_items.Length; j++)
 					{
 						string text2 = l_items[j];
-						if (text2.Contains(_line))
+						// Weighed against the code field on its own. Looking for the code anywhere in the
+						// row also matches a longer code that starts with it, so Q823353_OE6 picked up the
+						// rows of Q823353_OE6_SP1 as well: the language count read three times what it
+						// should, and every row gathered here is one an edit to this update would rewrite.
+						if (CodeOfItemsLine(text2) == _line)
 						{
 							num++;
 							list.Add(text2);
@@ -758,6 +762,21 @@ catch (Exception ex)
 
 	// Prerequisites are stored after the @| separator on an itemsindex line. An update has them if
 	// any of its lines carries something there.
+	// The update code an items row carries, which is the field between the item identifier and
+	// the first separator. Returns null for a row that is empty or malformed, which then
+	// matches no code at all.
+	private static string CodeOfItemsLine(string itemsLine)
+	{
+		if (string.IsNullOrEmpty(itemsLine)) return null;
+
+		int at = itemsLine.IndexOf("@|", StringComparison.Ordinal);
+		string head = at < 0 ? itemsLine : itemsLine.Substring(0, at);
+		int comma = head.IndexOf(',');
+		if (comma < 0) return null;
+
+		return head.Substring(comma + 1).Trim();
+	}
+
 	private bool HasPrerequisites(string code)
 	{
 		if (string.IsNullOrEmpty(code) || l_itemsindex == null) return false;
@@ -1174,6 +1193,7 @@ catch (Exception ex)
 		{
 			return 0;
 		}
+		int refsBefore = 0;
 		List<string> order = new List<string>();
 		Dictionary<string, List<string>> vals = new Dictionary<string, List<string>>(StringComparer.Ordinal);
 		Dictionary<string, HashSet<string>> seenVals = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
@@ -1197,6 +1217,7 @@ catch (Exception ex)
 				{
 					continue;
 				}
+				refsBefore++;
 				if (seenVals[key].Add(parts[j]))
 				{
 					vals[key].Add(parts[j]);
@@ -1209,9 +1230,15 @@ catch (Exception ex)
 			List<string> v = vals[key];
 			merged.Add((v.Count > 0) ? (key + "," + string.Join(",", v)) : key);
 		}
+		// References dropped inside a line count as much as whole lines dropped. Counting only
+		// the lines reported nothing while two hundred odd repeated references were quietly
+		// taken out, and the repair went on to say the provider was consistent.
+		int refsAfter = 0;
+		foreach (string key in order) refsAfter += vals[key].Count;
+
 		int lineDelta = arr.Length - merged.Count;
 		arr = merged.ToArray();
-		return lineDelta;
+		return lineDelta + (refsBefore - refsAfter);
 	}
 
 	// Every items.txt record opens with a GUID and a comma. Every record in the other four files
@@ -1336,13 +1363,15 @@ catch (Exception ex)
 		int rejoined = RepairSplitRecords();
 		int duplicates = SanitizeProvider();
 		int eulaFixed = RepairEulaEscaping();
+		int unwrapped = RepairWrappedLinks();
 		int orphanIndex = RepairOrphanedIndexEntries();
 		List<string> stillBroken = FindCatalogBreakingRecords();
 
 		System.Text.StringBuilder sb = new System.Text.StringBuilder();
 		sb.AppendLine(rejoined + " split records were joined back together.");
-		sb.AppendLine(duplicates + " duplicate lines were removed.");
+		sb.AppendLine(duplicates + " duplicate lines and references were removed.");
 		sb.AppendLine(eulaFixed + " EULA links were escaped.");
+		sb.AppendLine(unwrapped + " links had an address wrapped inside another.");
 		sb.AppendLine(orphanIndex + " index entries pointing at a missing update were removed.");
 		if (stillBroken.Count > 0)
 		{
@@ -1370,7 +1399,13 @@ catch (Exception ex)
 	// fields itself, so they are checked before every save rather than after the damage ships.
 	private const int InstallationField = 5;
 
-	private const int EulaField = 4;
+	// An itemstrings row is <provider>.<guid>,<title>@|<description>@|<eula>@|@|<details>.
+	// The licence is the third field and the more information link the fifth. This said the
+	// licence was the fifth, so every pass below has been reading and repairing the link
+	// instead, and a licence that really did break the catalogue was never touched.
+	private const int EulaField = 2;
+
+	private const int DetailsField = 4;
 
 	private static readonly System.Text.RegularExpressions.Regex BareAmpersand =
 		new System.Text.RegularExpressions.Regex(@"&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9A-Fa-f]+);)");
@@ -1406,13 +1441,78 @@ catch (Exception ex)
 				if (string.IsNullOrEmpty(line)) continue;
 				string[] parts = line.Split(FieldSeparator, StringSplitOptions.None);
 				if (parts.Length <= EulaField) continue;
-				if (NeedsEscaping(parts[EulaField]))
+				bool badEula = NeedsEscaping(parts[EulaField]);
+				bool badDetails = parts.Length > DetailsField && NeedsEscaping(parts[DetailsField]);
+				if (badEula || badDetails)
 				{
-					problems.Add("itemstrings.txt line " + (i + 1) + ": the EULA link contains characters that break the XML attribute.");
+					string which = badEula && badDetails
+						? "the licence and more information links"
+						: badEula ? "the licence link" : "the more information link";
+					problems.Add("itemstrings.txt line " + (i + 1) + ": " + which + " contain characters that break the XML attribute.");
 				}
 			}
 		}
 		return problems;
+	}
+
+	// An address that has been wrapped inside another, such as
+	// support.microsoft.com/?kbid=http://go.microsoft.com/fwlink/?LinkId=59989. The licence
+	// editor used to build its address around whatever sat in its box, and a whole address left
+	// there ended up inside the new one. The inner address is the real one, so the wrapper is
+	// taken off. Only a wrapper that ends at an address is unwrapped, so a link that merely
+	// carries another as a parameter is left alone.
+	public int RepairWrappedLinks()
+	{
+		if (l_itemstrings == null) return 0;
+
+		int repaired = 0;
+		for (int i = 0; i < l_itemstrings.Length; i++)
+		{
+			string line = l_itemstrings[i];
+			if (string.IsNullOrEmpty(line)) continue;
+
+			string[] parts = line.Split(FieldSeparator, StringSplitOptions.None);
+			bool touched = false;
+			foreach (int field in new int[] { EulaField, DetailsField })
+			{
+				if (parts.Length <= field) continue;
+
+				string inner = InnerAddress(parts[field]);
+				if (inner == null) continue;
+
+				parts[field] = inner;
+				touched = true;
+			}
+			if (!touched) continue;
+
+			l_itemstrings[i] = string.Join("@|", parts);
+			repaired++;
+		}
+
+		return repaired;
+	}
+
+	// The address buried inside another, or null when there is only one. The second address has
+	// to run to the end of the value: anything after it would be lost by unwrapping, and that
+	// is a link this cannot safely rewrite.
+	private static string InnerAddress(string value)
+	{
+		if (string.IsNullOrEmpty(value)) return null;
+
+		int first = value.IndexOf("http", StringComparison.OrdinalIgnoreCase);
+		if (first < 0) return null;
+
+		int second = value.IndexOf("http", first + 4, StringComparison.OrdinalIgnoreCase);
+		if (second < 0) return null;
+
+		string inner = value.Substring(second);
+		if (!inner.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+			!inner.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) return null;
+
+		// A third one means this is not the simple wrapping the editor produced.
+		if (inner.IndexOf("http", 4, StringComparison.OrdinalIgnoreCase) >= 0) return null;
+
+		return inner;
 	}
 
 	// Escapes the characters that break the XML attribute the EULA link sits in. This is mechanical
@@ -1427,10 +1527,19 @@ catch (Exception ex)
 			if (string.IsNullOrEmpty(line)) continue;
 			string[] parts = line.Split(FieldSeparator, StringSplitOptions.None);
 			if (parts.Length <= EulaField) continue;
-			string eula = parts[EulaField];
-			if (!NeedsEscaping(eula)) continue;
-			// Ampersands first, so the entities introduced below are not escaped a second time.
-			parts[EulaField] = BareAmpersand.Replace(eula, "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+
+			// Both addresses are dropped into the catalogue XML, so both are escaped.
+			bool touched = false;
+			foreach (int field in new int[] { EulaField, DetailsField })
+			{
+				if (parts.Length <= field || !NeedsEscaping(parts[field])) continue;
+
+				// Ampersands first, so the entities introduced below are not escaped a second time.
+				parts[field] = BareAmpersand.Replace(parts[field], "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+				touched = true;
+			}
+			if (!touched) continue;
+
 			l_itemstrings[i] = string.Join("@|", parts);
 			repaired++;
 		}

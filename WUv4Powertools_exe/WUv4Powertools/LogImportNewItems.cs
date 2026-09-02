@@ -228,11 +228,17 @@ public static class LogImportNewItems
 			}
 		}
 
+		// Offered only when the published GUID is free. The same update sometimes served two
+		// languages from one row, so the GUID a log gives for one language can already belong to
+		// another. Moving onto it would leave two rows sharing an identity, so it is left alone
+		// rather than offered every time and never applied.
 		if (!string.IsNullOrEmpty(c.ItemGuid) && !string.IsNullOrEmpty(existingItemsLine))
 		{
 			int comma = existingItemsLine.IndexOf(',');
 			string current = comma > 0 ? existingItemsLine.Substring(0, comma).Trim() : string.Empty;
-			correction.Guid = !string.Equals(current, c.ItemGuid, StringComparison.OrdinalIgnoreCase);
+			correction.Guid =
+				!string.Equals(current, c.ItemGuid, StringComparison.OrdinalIgnoreCase) &&
+				(index == null || !index.HasItemGuid(c.ItemGuid));
 		}
 
 		if (TitleUsable(c, locale) && existingTitle != null)
@@ -254,8 +260,14 @@ public static class LogImportNewItems
 		if (!c.DownloadFailed && !string.IsNullOrEmpty(c.FileName) && !string.IsNullOrEmpty(existingItemsLine))
 		{
 			string leaf = LogImportEngine.LeafOfLine(existingItemsLine);
+
+			// The address carries the hash the cabpool appended, while the log records the path the
+			// file was saved to and so names it without one. They are the same file, so the hash comes
+			// off both before they are weighed up. Skipping this offers a correction that never settles
+			// and, worse, replaces a hashed address with a name that would not resolve.
 			correction.FileName = leaf != null &&
-				!string.Equals(leaf, c.FileName, StringComparison.OrdinalIgnoreCase);
+				!string.Equals(LogImportParser.StripHash(leaf),
+					LogImportParser.StripHash(c.FileName), StringComparison.OrdinalIgnoreCase);
 		}
 
 		return correction;

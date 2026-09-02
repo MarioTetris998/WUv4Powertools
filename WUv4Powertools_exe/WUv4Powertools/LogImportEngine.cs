@@ -230,14 +230,14 @@ public sealed class ProviderIndex
 
 	// The category to file a brand new update under, taken from wherever most of this provider's
 	// updates already sit.
-	// Update codes in this provider whose article number matches, which is the only way a log
-	// download can be tied back to an update the dictionaries already know about.
-	public IEnumerable<string> CodesWithArticle(string article)
+	// This provider's own spelling of a code, when it holds it. Used to tie a log download to
+	// an update by the code the log states, rather than by anything inferred.
+	public IEnumerable<string> CodesMatching(string code)
 	{
-		if (string.IsNullOrEmpty(article)) yield break;
-		foreach (string code in byCode.Keys)
+		if (string.IsNullOrEmpty(code)) yield break;
+		foreach (string known in byCode.Keys)
 		{
-			if (code.IndexOf(article, StringComparison.OrdinalIgnoreCase) >= 0) yield return code;
+			if (string.Equals(known, code, StringComparison.OrdinalIgnoreCase)) yield return known;
 		}
 	}
 
@@ -261,6 +261,13 @@ public sealed class ProviderIndex
 		if (!guidByCode.TryGetValue(code ?? string.Empty, out locales)) return null;
 		string guid;
 		return locales.TryGetValue(locale ?? string.Empty, out guid) ? guid : null;
+	}
+
+	// Whether some row already carries this GUID. Two rows sharing one identity would leave the
+	// index unable to tell them apart, so a correction onto a taken GUID is never offered.
+	public bool HasItemGuid(string guid)
+	{
+		return !string.IsNullOrEmpty(guid) && itemsByGuid.ContainsKey(guid);
 	}
 
 	public string ItemsLineFor(string code, string locale)
@@ -572,12 +579,26 @@ public static class LogImportEngine
 		Dictionary<string, string> newLangGuids =
 			new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+		// Identifiers the provider already carries, so a second row is never written for a language
+		// that has one. Several entries can land on the same language: forcing an override collapses
+		// every language of an update onto one, and a log can record the same download repeatedly.
+		HashSet<string> takenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (string entry in itemsIndex)
+		{
+			if (string.IsNullOrEmpty(entry)) continue;
+			string entryHead = entry.Split(Sep, StringSplitOptions.None)[0];
+			int entryComma = entryHead.LastIndexOf(',');
+			if (entryComma > 0) takenIds.Add(entryHead.Substring(0, entryComma));
+		}
+
 		foreach (ImportCandidate c in candidates)
 		{
 			string locale = LocaleFor(c, chosenLanguage, overrideLanguage);
 			if (string.IsNullOrEmpty(locale))
 			{
 				summary.Skipped++;
+				summary.Notes.Add(c.Provider + ": " + c.Code +
+					" skipped, the language it belongs to could not be worked out");
 				continue;
 			}
 
@@ -597,7 +618,7 @@ public static class LogImportEngine
 				// from. It comes in with a placeholder rule that matches nothing, which keeps it out of
 				// the way of real machines and marks it in the list as still needing work.
 				AddNewUpdate(c, locale, store, index, items, itemsIndex, strings, stringsIndex,
-					product2Items, newLangGuids, summary, provenance);
+					product2Items, newLangGuids, takenIds, summary, provenance);
 				continue;
 			}
 
@@ -677,6 +698,16 @@ public static class LogImportEngine
 				newFields[8] = c.Size.ToString();
 			}
 
+			// Another entry has already given this language a row, so adding a second would leave two
+			// records under one identifier and the catalogue unable to tell them apart.
+			if (!takenIds.Add(newItemId))
+			{
+				summary.Skipped++;
+				summary.Notes.Add(store.Name + ": " + c.Code + " (" + locale +
+					") skipped, another entry has already given this language a row");
+				continue;
+			}
+
 			items.Add(string.Join("@|", newFields));
 			summary.ItemsAdded++;
 			summary.Count(store.Name);
@@ -703,8 +734,8 @@ public static class LogImportEngine
 				{
 					string stringGuid = Guid.NewGuid().ToString().ToUpper();
 					stringsIndex.Add(store.Name + "." + locale + "." + langGuid + "," + stringGuid);
-					strings.Add(string.Format("{0}.{1},{2}@|{3}@|{4}/eula.htm@|@|{5}",
-						store.Name, stringGuid, c.Title, string.Empty, locale, c.DetailsHref));
+					strings.Add(string.Format("{0}.{1},{2}@|{3}@|{4}@|@|{5}",
+						store.Name, stringGuid, c.Title, string.Empty, EulaFor(c, locale), c.DetailsHref));
 					summary.StringsAdded++;
 					provenance.MarkAuthentic(store.Name, stringGuid);
 				}
@@ -757,7 +788,7 @@ public static class LogImportEngine
 	private static void AddNewUpdate(ImportCandidate c, string locale, ProviderStore store,
 		ProviderIndex index, List<string> items, List<string> itemsIndex, List<string> strings,
 		List<string> stringsIndex, List<string> product2Items, Dictionary<string, string> newLangGuids,
-		ImportSummary summary, StringProvenance provenance)
+		HashSet<string> takenIds, ImportSummary summary, StringProvenance provenance)
 	{
 		if (string.IsNullOrEmpty(c.ItemId))
 		{
@@ -782,11 +813,15 @@ public static class LogImportEngine
 			: c.ItemGuid;
 		if (!string.IsNullOrEmpty(c.ItemGuid)) summary.GuidsFromLog++;
 
-		// A repeated run must not write the same record twice.
+		// A repeated run, or a second entry landing on the same language, must not write the same
+		// record twice.
 		string head = fileGuid + ",";
-		if (items.Any(x => !string.IsNullOrEmpty(x) && x.StartsWith(head, StringComparison.OrdinalIgnoreCase)))
+		if (!takenIds.Add(itemId) ||
+			items.Any(x => !string.IsNullOrEmpty(x) && x.StartsWith(head, StringComparison.OrdinalIgnoreCase)))
 		{
 			summary.Skipped++;
+			summary.Notes.Add(store.Name + ": " + c.Code + " (" + locale +
+				") skipped, it is already written under this identifier");
 			return;
 		}
 
@@ -803,8 +838,8 @@ public static class LogImportEngine
 
 		string stringGuid = Guid.NewGuid().ToString().ToUpper();
 		stringsIndex.Add(store.Name + "." + locale + "." + langGuid + "," + stringGuid);
-		strings.Add(string.Format("{0}.{1},{2}@|{3}@|{4}/eula.htm@|@|{5}",
-			store.Name, stringGuid, c.Title, string.Empty, locale, c.DetailsHref));
+		strings.Add(string.Format("{0}.{1},{2}@|{3}@|{4}@|@|{5}",
+			store.Name, stringGuid, c.Title, string.Empty, EulaFor(c, locale), c.DetailsHref));
 		summary.StringsAdded++;
 		provenance.MarkAuthentic(store.Name, stringGuid);
 
@@ -819,12 +854,22 @@ public static class LogImportEngine
 	{
 		if (c.Fix == null || !c.Fix.Any) return;
 
+		// Set by each part that manages to change something. A correction that cannot be applied
+		// must not be reported as done, or it comes back on the next import looking untouched.
+		bool changed = false;
+
 		// One code is shared by every language of an update, so respelling it covers the whole
 		// update and is done before anything else is looked up by code.
-		if (c.Fix.Capitalisation && !string.IsNullOrEmpty(c.Fix.CodeAsPublished) &&
-			RenameCode(items, itemsIndex, product2Items, c.Fix.CodeAsPublished))
+		if (c.Fix.Capitalisation && !string.IsNullOrEmpty(c.Fix.CodeAsPublished))
 		{
-			summary.CodesRecased++;
+			// One code is shared by every language of an update, so the first language to be
+			// corrected respells it for all of them. The rest find nothing left to do, and that
+			// is the correction having worked rather than having failed.
+			if (RenameCode(items, itemsIndex, product2Items, c.Fix.CodeAsPublished))
+			{
+				summary.CodesRecased++;
+			}
+			changed = true;
 		}
 
 		string oldGuid = index.ItemGuidFor(c.Code, locale);
@@ -867,6 +912,7 @@ public static class LogImportEngine
 				newGuid = c.ItemGuid;
 				fields[0] = newGuid + "," + c.Code;
 				summary.GuidsCorrected++;
+				changed = true;
 			}
 		}
 
@@ -874,6 +920,7 @@ public static class LogImportEngine
 		{
 			fields[5] = SetDownload(fields[5], c.DownloadUrl, c.FileName, c.Size, c.CleanFileName);
 			summary.FileNamesCorrected++;
+			changed = true;
 		}
 
 		if (c.Fix.CommandType && !string.IsNullOrEmpty(c.Fix.CommandTypeAsObserved))
@@ -885,6 +932,7 @@ public static class LogImportEngine
 					"commandType=\"" + was + "\"",
 					"commandType=\"" + c.Fix.CommandTypeAsObserved + "\"");
 				summary.CommandTypesCorrected++;
+				changed = true;
 			}
 		}
 
@@ -897,14 +945,21 @@ public static class LogImportEngine
 					"needsReboot=\"" + was + "\"",
 					"needsReboot=\"" + c.Fix.RebootAsObserved + "\"");
 				summary.RebootFlagsCorrected++;
+				changed = true;
 			}
 		}
 
-		// A published date belongs to this language alone, so it only goes on this row.
-		if (c.HasPostedDate && fields[9] != c.Timestamp)
+		// A published date belongs to one language. Where an update served every language from a
+		// single row that row carries one date for all of them, and writing this language's date
+		// into it would restamp every other language from one language's record. The catalogue
+		// really does differ language by language, a second apart where a batch was published in
+		// sequence, so the date is only written where the row belongs to this language alone.
+		if (c.HasPostedDate && !SameInstant(fields[9], c.Timestamp) &&
+			LocalesOnRow(itemsIndex, oldGuid) <= 1)
 		{
 			fields[9] = c.Timestamp;
 			summary.DatesCorrected++;
+			changed = true;
 		}
 
 		items[itemAt] = string.Join("@|", fields);
@@ -915,6 +970,7 @@ public static class LogImportEngine
 		{
 			newItemId = ReplaceVersion(itemId, c.Version);
 			summary.VersionsCorrected++;
+			changed = true;
 		}
 		// An items row is pointed at by one index entry per operating system target it serves, so a
 		// new GUID has to be followed through all of them. Only the entry naming this exact
@@ -939,6 +995,15 @@ public static class LogImportEngine
 			}
 		}
 
+		// product2items names the same identifier with the provider taken off the front, so a
+		// rewritten version has to be carried into it as well. Leaving it behind points the
+		// product at an entry that no longer exists, and the update quietly stops being offered
+		// for that operating system even though its row is still there.
+		if (!string.Equals(newItemId, itemId, StringComparison.Ordinal))
+		{
+			RepointProductLinks(product2Items, itemId, newItemId);
+		}
+
 		if (c.Fix.Title && LogImportNewItems.TitleUsable(c, locale))
 		{
 			string langGuid = index.LangGuidFor(c.Code);
@@ -946,8 +1011,17 @@ public static class LogImportEngine
 			if (stringGuid != null && ReplaceTitle(strings, store.Name, stringGuid, c.Title, c.DetailsHref))
 			{
 				summary.TitlesCorrected++;
+				changed = true;
 				provenance.MarkAuthentic(store.Name, stringGuid);
 			}
+		}
+
+		if (!changed)
+		{
+			summary.Skipped++;
+			summary.Notes.Add(store.Name + ": " + c.Code + " (" + locale +
+				") could not be corrected, nothing it offered could be applied");
+			return;
 		}
 
 		summary.Corrected++;
@@ -1097,6 +1171,134 @@ public static class LogImportEngine
 		start += open.Length;
 		int end = text.IndexOf(close, start, StringComparison.Ordinal);
 		return end < 0 ? null : text.Substring(start, end - start);
+	}
+
+	// How many languages a single items row serves, counted from the index entries that point at
+	// it. Most updates shipped one file per language, but some served every language from one
+	// row and anything written there is written for all of them at once.
+	private static int LocalesOnRow(List<string> itemsIndex, string guid)
+	{
+		if (itemsIndex == null || string.IsNullOrEmpty(guid)) return 0;
+
+		HashSet<string> locales = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (string entry in itemsIndex)
+		{
+			if (string.IsNullOrEmpty(entry)) continue;
+			string head = entry.Split(Sep, StringSplitOptions.None)[0];
+			int comma = head.LastIndexOf(',');
+			if (comma <= 0) continue;
+			if (!string.Equals(head.Substring(comma + 1).Trim(), guid,
+				StringComparison.OrdinalIgnoreCase)) continue;
+
+			string[] parts = head.Substring(0, comma).Split('.');
+			if (parts.Length >= 15) locales.Add(parts[6]);
+		}
+
+		return locales.Count;
+	}
+
+	// Whether two published dates name the same moment. The catalogue writes the fraction of a
+	// second as it pleases while the dictionaries pad it, so 17:26:05.055 and 17:26:05.0550 are
+	// the same date spelled two ways and rewriting one as the other changes nothing.
+	private static bool SameInstant(string left, string right)
+	{
+		if (string.Equals(left, right, StringComparison.Ordinal)) return true;
+		if (string.IsNullOrEmpty(left) || string.IsNullOrEmpty(right)) return false;
+
+		return string.Equals(TrimFraction(left), TrimFraction(right), StringComparison.OrdinalIgnoreCase);
+	}
+
+	private static string TrimFraction(string stamp)
+	{
+		int dot = stamp.LastIndexOf('.');
+		if (dot < 0) return stamp;
+
+		string trimmed = stamp.Substring(dot + 1).TrimEnd('0');
+		return trimmed.Length == 0 ? stamp.Substring(0, dot) : stamp.Substring(0, dot + 1) + trimmed;
+	}
+
+	// The licence address for a new row. The source states it outright, so that is what gets
+	// written and an update keeps the licence it was really served with: the administrator
+	// catalogue points at corp_eula.htm and consumer history at eula.htm. Only when the source
+	// gave none is one built, and then it is the corporate form. What used to be written was
+	// neither: a bare "cs/eula.htm" with no path in front of it, thrown away from the address
+	// the file had already supplied.
+	private const string EulaFolder = "/msdownload/update/v3/static/eula/";
+
+	private static string EulaFor(ImportCandidate c, string locale)
+	{
+		// The dictionaries hold this as a path relative to the licence folder, "cs/eula.htm"
+		// rather than the whole address, which is how all eighteen thousand of the rows already
+		// there are written. The source states the whole address, so the folder comes off it.
+		if (c != null && !string.IsNullOrEmpty(c.EulaHref))
+		{
+			string href = c.EulaHref;
+			int at = href.IndexOf(EulaFolder, StringComparison.OrdinalIgnoreCase);
+			return at < 0 ? href : href.Substring(at + EulaFolder.Length);
+		}
+
+		return locale + "/corp_eula.htm";
+	}
+
+	// Moves every product2items reference from one identifier to another, matched whole rather
+	// than by substring so a code that is the start of a longer one is never caught.
+	private static bool RepointProductLinks(List<string> product2Items, string oldItemId,
+		string newItemId)
+	{
+		if (product2Items == null) return false;
+
+		string oldRef = WithoutProvider(oldItemId);
+		string newRef = WithoutProvider(newItemId);
+		if (oldRef == null || newRef == null ||
+			string.Equals(oldRef, newRef, StringComparison.Ordinal)) return false;
+
+		bool changed = false;
+		for (int i = 0; i < product2Items.Count; i++)
+		{
+			if (string.IsNullOrEmpty(product2Items[i])) continue;
+			string[] refs = product2Items[i].Split(',');
+			// A line can already carry the identifier being moved to, in which case the old
+			// reference is dropped rather than rewritten: listing the same item twice under one
+			// product is not something the catalogue expects.
+			bool holdsNew = false;
+			for (int j = 1; j < refs.Length; j++)
+			{
+				if (string.Equals(refs[j], newRef, StringComparison.OrdinalIgnoreCase)) holdsNew = true;
+			}
+
+			List<string> kept = new List<string> { refs[0] };
+			bool touched = false;
+			for (int j = 1; j < refs.Length; j++)
+			{
+				if (!string.Equals(refs[j], oldRef, StringComparison.OrdinalIgnoreCase))
+				{
+					kept.Add(refs[j]);
+					continue;
+				}
+
+				touched = true;
+				if (holdsNew) continue;
+
+				kept.Add(newRef);
+				holdsNew = true;
+			}
+			if (touched)
+			{
+				product2Items[i] = string.Join(",", kept.ToArray());
+				changed = true;
+			}
+		}
+
+		return changed;
+	}
+
+	// An identifier as product2items writes it, which is the items index form without the
+	// provider that heads it.
+	private static string WithoutProvider(string itemId)
+	{
+		if (string.IsNullOrEmpty(itemId)) return null;
+		int dot = itemId.IndexOf('.');
+		return dot < 0 ? null : itemId.Substring(dot + 1);
 	}
 
 	// product2items lists every item a given operating system target offers, one target per line.

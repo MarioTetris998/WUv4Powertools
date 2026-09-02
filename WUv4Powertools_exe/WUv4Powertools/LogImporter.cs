@@ -215,7 +215,12 @@ public sealed class SupersededList
 		if (exact.Contains(bare) || exact.Contains(scoped)) return true;
 		foreach (string p in prefixes)
 		{
-			if (bare.StartsWith(p) || scoped.StartsWith(p)) return true;
+			// A prefix is weighed against the provider qualified form only when it names a provider
+			// itself. Weighing a bare prefix against that form lets it match the provider name
+			// rather than the code, so ie6* would drop every update in ie60x instead of the few
+			// whose codes really do begin with ie6.
+			bool qualified = p.IndexOf(':') >= 0;
+			if (qualified ? scoped.StartsWith(p) : bare.StartsWith(p)) return true;
 		}
 		return false;
 	}
@@ -794,6 +799,8 @@ public static class LogImportParser
 			if (string.IsNullOrEmpty(key)) continue;
 			foreach (LogEntry e in downloads)
 			{
+				if (!string.IsNullOrEmpty(e.ItemCode) &&
+					!string.Equals(e.ItemCode, key, StringComparison.OrdinalIgnoreCase)) continue;
 				if (e.Core != null && e.Core.Length >= 6 &&
 					key.StartsWith(e.Core, StringComparison.OrdinalIgnoreCase)) return e;
 			}
@@ -806,6 +813,12 @@ public static class LogImportParser
 			foreach (LogEntry e in downloads)
 			{
 				if (e.Article != article) continue;
+
+				// The same article number ships a separate file for each operating system, so a
+				// download the log has already tied to a different update is never accepted here.
+				if (!string.IsNullOrEmpty(e.ItemCode) &&
+					!string.Equals(e.ItemCode, key, StringComparison.OrdinalIgnoreCase)) continue;
+
 				// A language specific file is only accepted for the language it was built for.
 				if (e.Locale != null && !string.Equals(e.Locale, language, StringComparison.OrdinalIgnoreCase)) continue;
 				return e;

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -19,27 +19,57 @@ public static class LogOnlyImport
 		if (result.Downloads.Count == 0) return 0;
 
 		int added = 0;
+
+		// A machine downloads the same update in session after session, so the same file turns up
+		// many times over. One row per update and language is enough.
+		HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (ImportCandidate existingCandidate in result.Candidates)
+		{
+			seen.Add(existingCandidate.Provider + "|" + existingCandidate.Code +
+				"|" + existingCandidate.Language);
+		}
+		// A machine downloads the same update over and over across the sessions a log covers, and
+		// a later session may fetch the replacement for a file that has since been superseded:
+		// Windows98-KB891711-FIN.EXE in one session and Windows98-KB891711-v2-FIN.EXE in a later
+		// one. Entries are held in the order the machine wrote them, so the last download for an
+		// update and language is the newest and the only one worth offering. Taking whichever
+		// came first would offer to put the older file back, and then offer to undo that on the
+		// next import, with neither pass ever settling.
+		Dictionary<string, LogImportParser.LogEntry> newest =
+			new Dictionary<string, LogImportParser.LogEntry>(StringComparer.OrdinalIgnoreCase);
+		foreach (LogImportParser.LogEntry download in result.Downloads)
+		{
+			// The log names the update this download belongs to, and only that exact code is
+			// accepted. Matching on the article number instead would tie a file to any update
+			// sharing its KB number, and the same KB ships a separate binary per operating
+			// system: a Windows ME download would overwrite the Windows Server 2003 one.
+			if (string.IsNullOrEmpty(download.ItemCode)) continue;
+
+			// A file with no language tag served every language, so it says nothing about which
+			// language is missing and is left for the history file to describe.
+			if (download.Locale == null) continue;
+
+			newest[download.ItemCode + "|" + download.Locale] = download;
+		}
+
 		foreach (ProviderStore store in dictionary.Providers)
 		{
 			ProviderIndex index = store.Index;
 
-			foreach (LogImportParser.LogEntry download in result.Downloads)
+			foreach (LogImportParser.LogEntry download in newest.Values)
 			{
-				if (download.Article == null) continue;
-
-				// A file with no language tag served every language, so it says nothing about which
-				// language is missing and is left for the history file to describe.
-				if (download.Locale == null) continue;
-
-				foreach (string code in index.CodesWithArticle(download.Article))
+				foreach (string code in index.CodesMatching(download.ItemCode))
 				{
 					string existing = index.ItemsLineFor(code, download.Locale);
 					bool present = existing != null;
 
 					// The file the provider records for this language, if it has one at all.
 					string currentLeaf = present ? LogImportEngine.LeafOfLine(existing) : null;
+					// Compared without the cabpool hash, which the address carries and the saved path does
+					// not, so a name that is already right is not offered again every time.
 					bool sameFile = currentLeaf != null &&
-						string.Equals(currentLeaf, download.FileName, StringComparison.OrdinalIgnoreCase);
+						string.Equals(LogImportParser.StripHash(currentLeaf),
+							LogImportParser.StripHash(download.FileName), StringComparison.OrdinalIgnoreCase);
 					if (present && sameFile) continue;
 
 					ImportCandidate candidate = new ImportCandidate
@@ -58,6 +88,8 @@ public static class LogOnlyImport
 						HasPostedDate = false,
 						ItemId = index.ItemIdFor(code, download.Locale) ?? index.SiblingItemId(code)
 					};
+
+					if (!seen.Add(store.Name + "|" + code + "|" + download.Locale)) continue;
 
 					result.Candidates.Add(candidate);
 					added++;

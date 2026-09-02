@@ -800,8 +800,6 @@ public class frmAddUpdate : Form
 
 	private async void advancedWizard1_Finish(object sender, EventArgs e)
 	{
-		// Capture the dictionaries before changing them, so this can be taken back with Undo.
-		frmItemList.PushUndoState();
 		// Comprehensive input validation
 		if (string.IsNullOrWhiteSpace(txtUpdCode.Text))
 		{
@@ -849,6 +847,16 @@ public class frmAddUpdate : Form
 			return;
 		}
 		
+		// The code is written into the identifier in itemsindex, which is split on dots, and
+		// into the comma separated lists in product2items. A code carrying either would not
+		// survive the trip.
+		if (txtUpdCode.Text.IndexOf(',') >= 0 || txtUpdCode.Text.IndexOf('.') >= 0 ||
+			txtUpdCode.Text.IndexOf("@|", StringComparison.Ordinal) >= 0)
+		{
+			MessageBox.Show("An update code cannot contain a comma, a full stop, or @|.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+			return;
+		}
+
 		// Validate critical object references
 		if (frmItemList == null)
 		{
@@ -862,6 +870,11 @@ public class frmAddUpdate : Form
 			return;
 		}
 		
+		// Every reason to refuse has been weighed, so the dictionaries are about to change and
+		// this is the point to record. Capturing before the checks left an undo step behind
+		// for each attempt that was turned away, none of which changed anything.
+		frmItemList.PushUndoState();
+
 		string _cmbGroup = cmbGroup.Text;
 		string _cmbLang = cmbLang.Text;
 		string _cmbMinSP = cmbMinSP.Text ?? "";

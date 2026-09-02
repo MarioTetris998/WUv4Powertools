@@ -684,6 +684,33 @@ public class frmMain : Form
 			question += " the browser it lands on. It will either never be offered, or be offered against a";
 			question += " version it was never built for. Check the detection block afterwards.\n";
 		}
+		// An update the destination already holds is not refused, since a copy is sometimes how a
+		// language set gets rebuilt, but it is said plainly. Pasting mints fresh identifiers, so
+		// what lands is a second update under the same code rather than a replacement for the
+		// one already there, and nothing later in the application treats that as an error.
+		List<string> alreadyThere = new List<string>();
+		foreach (string code in UpdateClipboard.Codes)
+		{
+			string needle = "," + code + "@|";
+			foreach (string line in dest.l_items ?? new string[0])
+			{
+				if (string.IsNullOrEmpty(line)) continue;
+				if (line.IndexOf(needle, StringComparison.OrdinalIgnoreCase) < 0) continue;
+
+				alreadyThere.Add(code);
+				break;
+			}
+		}
+		if (alreadyThere.Count > 0)
+		{
+			question += "\nWARNING: " + dest.provider + " already has "
+				+ (alreadyThere.Count == 1 ? "this update" : alreadyThere.Count + " of these updates")
+				+ ", and pasting adds a second copy rather than replacing what is there:\n";
+			question += "  " + string.Join(", ", alreadyThere.Take(6).ToArray());
+			if (alreadyThere.Count > 6) question += " and " + (alreadyThere.Count - 6) + " more";
+			question += "\n";
+		}
+
 		if (MessageBox.Show(question, "Windows Update v4.0 PowerTools", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
 		{
 			return;
@@ -876,11 +903,14 @@ public class frmMain : Form
 		// Escaping the EULA link is mechanical, so it is simply done. A malformed installation
 		// block cannot be rewritten safely and is only ever reported.
 		int eulaFixed = list.RepairEulaEscaping();
+		// An address wrapped inside another is a whole address, so it is put right here rather
+		// than left for the escaping pass to tidy up something that is about to be replaced.
+		int unwrapped = list.RepairWrappedLinks();
 		int orphanIndex = list.RepairOrphanedIndexEntries();
 		int coverageGaps;
 		string issues = list.ValidateProvider(out coverageGaps);
 
-		if (issues == null && rejoined == 0 && duplicates == 0 && eulaFixed == 0 && orphanIndex == 0 && coverageGaps == 0)
+		if (issues == null && rejoined == 0 && duplicates == 0 && eulaFixed == 0 && unwrapped == 0 && orphanIndex == 0 && coverageGaps == 0)
 		{
 			MessageBox.Show("This provider is consistent. Nothing needed repairing.", "Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
 			return;
@@ -893,11 +923,15 @@ public class frmMain : Form
 		}
 		if (duplicates > 0)
 		{
-			report += duplicates + " duplicate lines were removed.\n";
+			report += duplicates + " duplicate lines and references were removed.\n";
 		}
 		if (eulaFixed > 0)
 		{
 			report += eulaFixed + " EULA links were escaped so they no longer break the catalog XML.\n";
+		}
+		if (unwrapped > 0)
+		{
+			report += unwrapped + " links had an address wrapped inside another and were put back to the address itself.\n";
 		}
 		if (orphanIndex > 0)
 		{
