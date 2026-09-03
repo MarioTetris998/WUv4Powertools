@@ -10,6 +10,21 @@ namespace WUv4Powertools;
 // those two facts a log alone can fill in a missing language and put a wrong file name right.
 public static class LogOnlyImport
 {
+	// A language this update is already held in, preferring English. Used when the download names
+	// no language of its own because one file serves them all.
+	private static string FirstLanguageOf(ProviderIndex index, string code)
+	{
+		string first = null;
+		foreach (string locale in index.LocalesFor(code))
+		{
+			if (string.Equals(locale, "en", StringComparison.OrdinalIgnoreCase)) return locale;
+
+			if (first == null) first = locale;
+		}
+
+		return first;
+	}
+
 	// Builds candidates from the downloads a log recorded, for every provider in the folder that has
 	// an update with the same article number. Only used when no history file was supplied, since a
 	// history file states all of this outright and far more reliably.
@@ -45,11 +60,11 @@ public static class LogOnlyImport
 			// system: a Windows ME download would overwrite the Windows Server 2003 one.
 			if (string.IsNullOrEmpty(download.ItemCode)) continue;
 
-			// A file with no language tag served every language, so it says nothing about which
-			// language is missing and is left for the history file to describe.
-			if (download.Locale == null) continue;
-
-			newest[download.ItemCode + "|" + download.Locale] = download;
+			// A file with no language tag in its name is the same download whatever language the
+			// machine runs, so it belongs to the update as a whole rather than to one language.
+			// Passing over it left an update that uses a single file untouched by an import that
+			// had its download sitting right there in the log.
+			newest[download.ItemCode + "|" + (download.Locale ?? string.Empty)] = download;
 		}
 
 		foreach (ProviderStore store in dictionary.Providers)
@@ -60,7 +75,13 @@ public static class LogOnlyImport
 			{
 				foreach (string code in index.CodesMatching(download.ItemCode))
 				{
-					string existing = index.ItemsLineFor(code, download.Locale);
+					// A file for everybody is weighed against a language the update already has, so
+					// the row is put right once. Offering it in the rest of the languages happens
+					// after the import, where the whole update can be seen at once.
+					string locale = download.Locale ?? FirstLanguageOf(index, code);
+					if (locale == null) continue;
+
+					string existing = index.ItemsLineFor(code, locale);
 					bool present = existing != null;
 
 					// The file the provider records for this language, if it has one at all.
@@ -76,7 +97,7 @@ public static class LogOnlyImport
 					{
 						Provider = store.Name,
 						Code = code,
-						Language = download.Locale,
+						Language = locale,
 						DownloadUrl = download.Url,
 						FileName = download.FileName,
 						SharedAcrossLanguages = download.Shared,
@@ -86,10 +107,10 @@ public static class LogOnlyImport
 						Title = string.Empty,
 						Timestamp = string.Empty,
 						HasPostedDate = false,
-						ItemId = index.ItemIdFor(code, download.Locale) ?? index.SiblingItemId(code)
+						ItemId = index.ItemIdFor(code, locale) ?? index.SiblingItemId(code)
 					};
 
-					if (!seen.Add(store.Name + "|" + code + "|" + download.Locale)) continue;
+					if (!seen.Add(store.Name + "|" + code + "|" + locale)) continue;
 
 					result.Candidates.Add(candidate);
 					added++;

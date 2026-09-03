@@ -379,6 +379,9 @@ public sealed class ImportSummary
 	// Rows removed because another row of the same update already held that file.
 	public int RowsMerged;
 
+	// Languages an update was offered in because one file serves all of them.
+	public int LanguagesFilledIn;
+
 	// Licence and more information addresses put right.
 	public int LinksCorrected;
 
@@ -580,19 +583,27 @@ public static class LogImportEngine
 		// Marks from an earlier run would only confuse which updates this one touched.
 		LogImportHighlight.Clear();
 
-		var byProvider = candidates
+		Dictionary<string, List<ImportCandidate>> byProvider = candidates
 			.Where(x => x.Selected)
-			.GroupBy(x => x.Provider, StringComparer.OrdinalIgnoreCase);
+			.GroupBy(x => x.Provider, StringComparer.OrdinalIgnoreCase)
+			.ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
 
-		foreach (var group in byProvider)
+		foreach (KeyValuePair<string, List<ImportCandidate>> pair in byProvider)
 		{
-			ProviderStore store = dictionary.Find(group.Key);
-			if (store == null)
-			{
-				summary.Skipped += group.Count();
-				summary.Notes.Add(group.Key + " is not in this inventory, so its updates were left out");
-				continue;
-			}
+			if (dictionary.Find(pair.Key) != null) continue;
+
+			summary.Skipped += pair.Value.Count;
+			summary.Notes.Add(pair.Key + " is not in this inventory, so its updates were left out");
+		}
+
+		// Every provider in the folder, not only those a log had something to say about. Putting an
+		// update that uses one file onto a single row is worth doing whether or not anything about it
+		// needed correcting, and an update that is already correct produces no candidate at all, so
+		// its provider was never even looked at.
+		foreach (ProviderStore store in dictionary.Providers)
+		{
+			List<ImportCandidate> mine;
+			if (!byProvider.TryGetValue(store.Name, out mine)) mine = new List<ImportCandidate>();
 
 			// An open provider has to be able to take the whole import back in one step.
 			if (store.OpenTab != null) store.OpenTab.PushUndoState();
@@ -600,9 +611,14 @@ public static class LogImportEngine
 			// Counted across both kinds of change. Watching only the number of rows added used to
 			// drop a provider whose updates were all corrections, since correcting adds no rows: the
 			// work was done and then never pushed to the tab or written to disk.
-			int before = summary.ItemsAdded + summary.Corrected;
-			ApplyToProvider(group.ToList(), store, chosenLanguage, overrideLanguage, summary, provenance);
-			if (summary.ItemsAdded + summary.Corrected == before) continue;
+			// Counted across every kind of change. Watching only what was added or corrected used to
+			// drop a provider whose only change was rows being put together, and that work was then
+			// never written out.
+			int before = summary.ItemsAdded + summary.Corrected + summary.RowsMerged +
+				summary.LanguagesFilledIn;
+			ApplyToProvider(mine, store, chosenLanguage, overrideLanguage, summary, provenance);
+			if (summary.ItemsAdded + summary.Corrected + summary.RowsMerged +
+				summary.LanguagesFilledIn == before) continue;
 
 			store.Dirty = true;
 			store.InvalidateIndex();
@@ -641,16 +657,12 @@ public static class LogImportEngine
 		List<string> stringsIndex = new List<string>(store.ItemStringsIndex ?? new string[0]);
 		List<string> product2Items = new List<string>(store.Product2Items ?? new string[0]);
 
-		// Updates this import is about to deal with. Any of them already holding the same file in
-		// more than one row is put on a single row first, so what follows reads and corrects the
-		// row that will still be there afterwards. Merging at the end instead threw away rows
-		// that had just been corrected.
-		HashSet<string> touched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-		foreach (ImportCandidate c in candidates)
-		{
-			if (!string.IsNullOrEmpty(c.Code)) touched.Add(c.Code);
-		}
-		summary.RowsMerged += MergeRowsSharingAFile(items, itemsIndex, touched);
+		// Every update holding one address on more than one row is put onto a single row first, so
+		// what follows reads and corrects the row that will still be there afterwards. This covers
+		// the whole inventory rather than only the updates a log happened to mention: an update
+		// that already uses one file for every language needs no correcting, so it was never
+		// looked at, and its languages went on sitting in a row each holding the same download.
+		summary.RowsMerged += MergeRowsSharingAFile(items, itemsIndex, null);
 
 		ProviderIndex index = new ProviderIndex(store.Name, items.ToArray(), itemsIndex.ToArray(),
 			stringsIndex.ToArray(), strings.ToArray());
@@ -859,6 +871,11 @@ public static class LogImportEngine
 			if (AddProductLink(product2Items, store.Name, newItemId)) summary.ProductLinksAdded++;
 		}
 
+		// An update served by one file reaches every language, so it is offered in every language
+		// this provider carries rather than only the few a log happened to mention.
+		summary.LanguagesFilledIn += OfferInEveryLanguage(store, index, items, itemsIndex,
+			product2Items);
+
 		store.Items = items.ToArray();
 		store.ItemsIndex = itemsIndex.ToArray();
 		store.ItemStrings = strings.ToArray();
@@ -923,6 +940,117 @@ public static class LogImportEngine
 		return false;
 	}
 
+	// Every language this provider carries, taken from the entries it already holds.
+	private static HashSet<string> LanguagesServed(List<string> itemsIndex)
+	{
+		HashSet<string> locales = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		if (itemsIndex == null) return locales;
+
+		foreach (string entry in itemsIndex)
+		{
+			if (string.IsNullOrEmpty(entry)) continue;
+
+			string head = entry.Split(Sep, StringSplitOptions.None)[0];
+			int comma = head.LastIndexOf(',');
+			if (comma <= 0) continue;
+
+			string[] parts = head.Substring(0, comma).Split('.');
+			if (parts.Length >= 15) locales.Add(parts[6]);
+		}
+
+		return locales;
+	}
+
+	// An update whose file carries no language tag is the same download whatever language the
+	// machine runs, so it belongs to all of them. Only the languages a log happened to record
+	// were offered it, which left an update that covers everything looking like it covered four.
+	// One row, and an entry for every language this provider carries and can name it in.
+	private static int OfferInEveryLanguage(ProviderStore store, ProviderIndex index,
+		List<string> items, List<string> itemsIndex, List<string> product2Items)
+	{
+		HashSet<string> served = LanguagesServed(itemsIndex);
+		if (served.Count == 0) return 0;
+
+		HashSet<string> codes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (string line in items)
+		{
+			string c = CodeOfRow(line);
+			if (c != null) codes.Add(c);
+		}
+
+		int added = 0;
+		foreach (string code in codes)
+		{
+			// Only where the whole update is one row. More than one means the languages really do
+			// download different files, and nothing should be spread across them.
+			string only = null;
+			int rows = 0;
+			foreach (string line in items)
+			{
+				if (!string.Equals(CodeOfRow(line), code, StringComparison.OrdinalIgnoreCase)) continue;
+
+				rows++;
+				only = line;
+			}
+			if (rows != 1 || only == null) continue;
+
+			string leaf = LeafOfLine(only);
+			if (leaf == null) continue;
+
+			// A name carrying a language tag is that language's own file, not one for everybody.
+			if (LogImportParser.LanguageTokenOf(leaf) != null) continue;
+
+			string guid = GuidOfRow(only);
+			string[] fields = only.Split(Sep, StringSplitOptions.None);
+			string langGuid = fields.Length > 2 ? fields[2].Trim() : null;
+			if (guid == null || langGuid == null) continue;
+
+			// The entries it already has, and one to model the rest on.
+			string template = null;
+			HashSet<string> present = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			foreach (string entry in itemsIndex)
+			{
+				if (string.IsNullOrEmpty(entry)) continue;
+
+				string head = entry.Split(Sep, StringSplitOptions.None)[0];
+				int comma = head.LastIndexOf(',');
+				if (comma <= 0) continue;
+
+				string id = head.Substring(0, comma);
+				string[] parts = id.Split('.');
+				if (parts.Length < 15) continue;
+				if (!string.Equals(parts[13], code, StringComparison.OrdinalIgnoreCase)) continue;
+
+				present.Add(parts[6]);
+				if (template == null) template = id;
+			}
+			if (template == null) continue;
+
+			// At least two languages already downloading this one file is what says it serves them
+			// all. Plenty of updates are for a single language and simply have no tag in the file
+			// name, and widening one of those would offer it to machines it was never meant for.
+			if (present.Count < 2) continue;
+
+			foreach (string locale in served)
+			{
+				if (present.Contains(locale)) continue;
+
+				// Only where the update can be named in that language. Without a title it would
+				// appear as a blank line rather than an update.
+				if (index.StringGuidFor(langGuid, locale) == null) continue;
+
+				string newId = ReplaceLocale(template, locale);
+				if (newId == null) continue;
+
+				itemsIndex.Add(newId + "," + guid + "@|");
+				AddProductLink(product2Items, store.Name, newId);
+				added++;
+			}
+		}
+
+		return added;
+	}
+
 	// The update code an items row carries, or null when the row is not one.
 	private static string CodeOfRow(string line)
 	{
@@ -980,10 +1108,11 @@ public static class LogImportEngine
 	// Puts every language of an update that uses one file onto a single row. Where two rows of
 	// the same update hold the same download, the first is kept, every index entry naming the
 	// others is pointed at it, and the others are taken out. Returns how many rows went.
+	// A null set of codes means every update in the inventory.
 	private static int MergeRowsSharingAFile(List<string> items, List<string> itemsIndex,
 		HashSet<string> codes)
 	{
-		if (items == null || itemsIndex == null || codes == null || codes.Count == 0) return 0;
+		if (items == null || itemsIndex == null) return 0;
 
 		// The row each duplicate should give way to, by the identifier it used to have.
 		Dictionary<string, string> replacement =
@@ -994,7 +1123,8 @@ public static class LogImportEngine
 		foreach (string line in items)
 		{
 			string code = CodeOfRow(line);
-			if (code == null || !codes.Contains(code)) continue;
+			if (code == null) continue;
+			if (codes != null && !codes.Contains(code)) continue;
 
 			string address = DownloadKey(line);
 			string guid = GuidOfRow(line);
