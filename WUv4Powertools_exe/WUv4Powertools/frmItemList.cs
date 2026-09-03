@@ -598,6 +598,15 @@ catch (Exception ex)
 				frmMain.PasteUpdates();
 				return true;
 			}
+
+			// Only while the update list itself has the focus. Delete is otherwise the ordinary
+			// editing key, and taking it everywhere in the tab would delete an update out from
+			// under someone deleting a character.
+			if (keyData == Keys.Delete && lstItems != null && lstItems.Focused)
+			{
+				frmMain.DeleteSelectedUpdates();
+				return true;
+			}
 		}
 		return base.ProcessCmdKey(ref msg, keyData);
 	}
@@ -614,6 +623,7 @@ catch (Exception ex)
 		pasteItem.ShortcutKeyDisplayString = "Ctrl+V";
 		pasteItem.Click += delegate { frmMain.PasteUpdates(); };
 		ToolStripMenuItem deleteItem = new ToolStripMenuItem("Delete");
+		deleteItem.ShortcutKeyDisplayString = "Del";
 		deleteItem.Click += delegate { frmMain.DeleteSelectedUpdates(); };
 		ToolStripMenuItem repairItem = new ToolStripMenuItem("Validate and Repair Provider");
 		repairItem.Click += delegate { frmMain.repairProviderToolStripMenuItem_Click(null, EventArgs.Empty); };

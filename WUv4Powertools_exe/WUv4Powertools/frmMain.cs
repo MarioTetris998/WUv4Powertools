@@ -867,6 +867,17 @@ public class frmMain : Form
 
 	private void frmMain_KeyDown(object sender, KeyEventArgs e)
 	{
+		// Delete carries no modifier, so it is weighed before the others. It is ignored while a
+		// text box has the focus, where it means delete a character rather than an update.
+		if (e.KeyCode == Keys.Delete)
+		{
+			if (ActiveControl is TextBoxBase) return;
+
+			DeleteSelectedUpdates();
+			e.Handled = true;
+			return;
+		}
+
 		if (!e.Control)
 		{
 			return;
