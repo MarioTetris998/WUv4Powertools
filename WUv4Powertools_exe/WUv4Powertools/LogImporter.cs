@@ -347,16 +347,35 @@ public static class LogImportParser
 		return false;
 	}
 
+	// Read as bytes and weighed in every encoding a log turns up in. Reading it as one encoding
+	// and hoping was not good enough: a log written as UTF-16 read back as UTF-8 has a nul between
+	// every letter, so the name never matched and the whole file was let through and used.
 	public static bool MentionsRestored(string path)
 	{
 		try
 		{
-			string text = File.ReadAllText(path, Encoding.UTF8);
-			string lower = text.ToLowerInvariant();
-			foreach (string marker in RestoredMarkers)
+			byte[] bytes = File.ReadAllBytes(path);
+			foreach (Encoding encoding in new Encoding[]
 			{
-				if (lower.Contains(marker)) return true;
+				Encoding.UTF8, Encoding.GetEncoding(28591), Encoding.Unicode, Encoding.BigEndianUnicode
+			})
+			{
+				string lower;
+				try
+				{
+					lower = encoding.GetString(bytes).ToLowerInvariant();
+				}
+				catch
+				{
+					continue;
+				}
+
+				foreach (string marker in RestoredMarkers)
+				{
+					if (lower.Contains(marker)) return true;
+				}
 			}
+
 			return false;
 		}
 		catch

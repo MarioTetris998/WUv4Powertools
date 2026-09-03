@@ -1118,10 +1118,34 @@ public static class LogImportEngine
 			return;
 		}
 
-		items.Add(LogImportNewItems.BuildItemsLine(c, langGuid, index.MostCommonGroup(), fileGuid,
-			LogImportNewItems.BuildInstallation(c)));
-		summary.ItemsAdded++;
-		summary.NewUpdatesAdded++;
+		string newRow = LogImportNewItems.BuildItemsLine(c, langGuid, index.MostCommonGroup(),
+			fileGuid, LogImportNewItems.BuildInstallation(c));
+
+		// An update new to this folder arrives once per language, and where those languages all
+		// download the same file they belong on one row that they all point at. Writing a row per
+		// language gave the same address two records and made an update that uses one file for
+		// everything look as though it had a separate one for each.
+		string sharedRow = RowWithSameFile(items, c.Code, newRow);
+		if (sharedRow != null)
+		{
+			string sharedGuid = GuidOfRow(sharedRow);
+			if (sharedGuid != null)
+			{
+				fileGuid = sharedGuid;
+				summary.LanguagesSharingAFile++;
+			}
+			else
+			{
+				sharedRow = null;
+			}
+		}
+
+		if (sharedRow == null)
+		{
+			items.Add(newRow);
+			summary.ItemsAdded++;
+			summary.NewUpdatesAdded++;
+		}
 		summary.Count(store.Name);
 		LogImportHighlight.Add(store.Name, c.Code);
 		if (!c.HasPostedDate) summary.WithoutPostedDate++;

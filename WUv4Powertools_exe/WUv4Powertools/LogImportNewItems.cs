@@ -60,7 +60,10 @@ public static class LogImportNewItems
 	// record stops the entire provider loading.
 	public static string BuildInstallation(ImportCandidate c)
 	{
+		// Nothing from the restored service is ever written, whatever handed it over. The block
+		// is still built so the record stays well formed, just without an address.
 		string url = c.DownloadUrl ?? string.Empty;
+		if (LogImportParser.NamesRestoredService(url)) url = string.Empty;
 		string name = LogImportParser.StripHash(c.FileName) ?? string.Empty;
 		long size = c.Size > 0 ? c.Size : 0;
 
