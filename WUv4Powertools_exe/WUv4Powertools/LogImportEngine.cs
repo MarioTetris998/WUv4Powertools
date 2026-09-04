@@ -420,8 +420,6 @@ public sealed class ImportSummary
 
 	public int FileNamesCorrected;
 
-	public int RowsSplit;
-
 	public int DatesCorrected;
 
 	// Updates whose code was respelled to the capitals the service published.
@@ -518,14 +516,17 @@ public static class LogImportEngine
 				c.Fix.Details = LogImportNewItems.LinkDiffers(c.DetailsHref, index.DetailsForStringGuid(stringGuid));
 
 				// One file serving several languages is a single row, and a row can carry only one
-				// identifier and one restart flag. The log states those for each language separately,
-				// so offering them here would put right what one language says and leave the next
-				// language asking for the opposite, over and over. They are only offered where the row
-				// belongs to this language alone.
+				// address, one identifier and one restart flag. The log states those for each language
+				// separately, so offering them here would put right what one language says and leave the
+				// next language asking for the opposite, over and over. The address matters most: one
+				// language reporting a download of its own is not reason to take an update that serves
+				// every language from one file and break it into a file per language. They are only
+				// offered where the row belongs to this language alone.
 				if (index.LanguagesOnRowFor(c.Code, locale) > 1)
 				{
 					c.Fix.Guid = false;
 					c.Fix.Reboot = false;
+					c.Fix.FileName = false;
 				}
 				if (c.Fix.Any)
 				{
@@ -1231,7 +1232,7 @@ public static class LogImportEngine
 
 	// How many languages point at one row as the entries stand now. A row holds a single address,
 	// so anything written on it is written for every language counted here.
-	private static int LanguagesOnRow(List<string> itemsIndex, string code, string guid)
+	private static int LanguagesOnRowNow(List<string> itemsIndex, string code, string guid)
 	{
 		if (itemsIndex == null || string.IsNullOrEmpty(code) || string.IsNullOrEmpty(guid)) return 0;
 
@@ -1253,32 +1254,6 @@ public static class LogImportEngine
 		}
 
 		return sharing;
-	}
-
-	// Sends one language's entry to another row, leaving every other language where it was.
-	private static bool PointLanguageAt(List<string> itemsIndex, string code, string locale, string guid)
-	{
-		if (itemsIndex == null || string.IsNullOrEmpty(code)) return false;
-
-		bool moved = false;
-		for (int i = 0; i < itemsIndex.Count; i++)
-		{
-			if (string.IsNullOrEmpty(itemsIndex[i])) continue;
-
-			string head = itemsIndex[i].Split(Sep, StringSplitOptions.None)[0];
-			int comma = head.LastIndexOf(',');
-			if (comma <= 0) continue;
-
-			string[] parts = head.Substring(0, comma).Split('.');
-			if (parts.Length < 15) continue;
-			if (!string.Equals(parts[13], code, StringComparison.OrdinalIgnoreCase)) continue;
-			if (!string.Equals(parts[6], locale, StringComparison.OrdinalIgnoreCase)) continue;
-
-			itemsIndex[i] = head.Substring(0, comma + 1) + guid + itemsIndex[i].Substring(head.Length);
-			moved = true;
-		}
-
-		return moved;
 	}
 
 	// The version is the final field of the identifier, as in com_microsoft.agent2_95.2_00_0_2202.
@@ -1457,23 +1432,6 @@ public static class LogImportEngine
 			return;
 		}
 
-		// A row shared by several languages carries one address for all of them, so writing this
-		// language's file onto it would hand its download to every other language on the row. Where
-		// the source states a build of this language's own, it is moved onto a row of its own and
-		// the languages it was sharing with keep the file they had.
-		if (c.Fix.FileName && !string.IsNullOrEmpty(c.DownloadUrl) &&
-			LanguagesOnRow(itemsIndex, c.Code, oldGuid) > 1)
-		{
-			string ownGuid = Guid.NewGuid().ToString().ToUpper();
-			if (PointLanguageAt(itemsIndex, c.Code, locale, ownGuid))
-			{
-				items.Add(ownGuid + items[itemAt].Substring(oldGuid.Length));
-				itemAt = items.Count - 1;
-				oldGuid = ownGuid;
-				summary.RowsSplit++;
-			}
-		}
-
 		string[] fields = items[itemAt].Split(Sep, StringSplitOptions.None);
 		if (fields.Length < 14) return;
 
@@ -1498,7 +1456,11 @@ public static class LogImportEngine
 			}
 		}
 
-		if (c.Fix.FileName && !string.IsNullOrEmpty(c.DownloadUrl))
+		// Never onto a row more than one language points at. What was offered was worked out
+		// before this import began and rows are shared as it runs, so the count is taken again
+		// here against the entries as they now stand.
+		if (c.Fix.FileName && !string.IsNullOrEmpty(c.DownloadUrl) &&
+			LanguagesOnRowNow(itemsIndex, c.Code, oldGuid) <= 1)
 		{
 			fields[5] = SetDownload(fields[5], c.DownloadUrl, c.FileName, c.Size, c.CleanFileName);
 			summary.FileNamesCorrected++;
