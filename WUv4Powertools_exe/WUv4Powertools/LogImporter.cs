@@ -397,7 +397,24 @@ public static class LogImportParser
 		foreach (string path in logPaths ?? Enumerable.Empty<string>())
 		{
 			if (!Usable(path, result)) continue;
-			ReadLog(path, downloads, pathLanguageVotes, tokenLanguageVotes, result);
+
+			// Weighed one file at a time. Pooling every log's votes together picked a single
+			// language for the whole run, so importing a folder of logs from machines in
+			// different languages filed most of them under whichever language won the count.
+			int firstDownload = downloads.Count;
+			List<string> pathsHere = new List<string>();
+			List<string> tokensHere = new List<string>();
+			ReadLog(path, downloads, pathsHere, tokensHere, result);
+
+			string spoken = Commonest(pathsHere) ?? Commonest(tokensHere);
+			for (int i = firstDownload; i < downloads.Count; i++)
+			{
+				downloads[i].LogLanguage = spoken;
+				downloads[i].SourceFile = Path.GetFileName(path);
+			}
+
+			pathLanguageVotes.AddRange(pathsHere);
+			tokenLanguageVotes.AddRange(tokensHere);
 		}
 
 		foreach (string path in xmlPaths ?? Enumerable.Empty<string>())
@@ -488,6 +505,12 @@ public static class LogImportParser
 		// Null when the file name carried no language tag, meaning it served every language.
 		public string Locale;
 
+		// The language of the machine whose log recorded this download. A bulk import covers
+		// machines in many languages, so this belongs to the file rather than to the run.
+		public string LogLanguage;
+
+		public string SourceFile;
+
 		// The six digit article number, which is the only key the two file formats share.
 		public string Article;
 
@@ -568,9 +591,10 @@ public static class LogImportParser
 				int marker = line.IndexOf("WindowsUpdate\\V4", StringComparison.OrdinalIgnoreCase);
 				if (marker > 0)
 				{
+					// The folder is the last part of the path, taken at the backslash. Cutting at the
+					// last space first threw away every folder whose name contains one, so "Program
+					// Files" came out as "Files" and matched nothing at all.
 					string head = line.Substring(0, marker).TrimEnd('\\');
-					int space = head.LastIndexOf(' ');
-					if (space >= 0) head = head.Substring(space + 1);
 					string leaf = head.Contains("\\") ? head.Substring(head.LastIndexOf('\\') + 1) : head;
 					foreach (KeyValuePair<string, string> pair in PathLanguages)
 					{
@@ -883,6 +907,14 @@ public static class LogImportParser
 			}
 		}
 		return string.Empty;
+	}
+
+	// The value seen most often, or null when there is nothing to go on.
+	private static string Commonest(List<string> votes)
+	{
+		if (votes == null || votes.Count == 0) return null;
+
+		return votes.GroupBy(v => v).OrderByDescending(g => g.Count()).First().Key;
 	}
 
 	private static void DecideLanguage(LogImportResult result, List<string> pathVotes, List<string> tokenVotes)

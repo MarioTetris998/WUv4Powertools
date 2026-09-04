@@ -264,7 +264,10 @@ public class frmItemList : Form
 			// item and so quadratic overall. win2k holds 3383 items lines, meaning millions of
 			// string comparisons every time the list was rebuilt.
 			List<string> u_items1 = new List<string>();
-			HashSet<string> u_seen = new HashSet<string>(StringComparer.Ordinal);
+			// One entry per update whatever the capitals. The same update is sometimes held under two
+			// spellings of its code, and listing it twice split its languages and its rows between
+			// them, so neither line showed what the update really covers.
+			HashSet<string> u_seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 			string[] array = l_items;
 			for (int i = 0; i < array.Length; i++)
 			{
@@ -303,7 +306,7 @@ public class frmItemList : Form
 						// row also matches a longer code that starts with it, so Q823353_OE6 picked up the
 						// rows of Q823353_OE6_SP1 as well: the language count read three times what it
 						// should, and every row gathered here is one an edit to this update would rewrite.
-						if (CodeOfItemsLine(text2) == _line)
+						if (string.Equals(CodeOfItemsLine(text2), _line, StringComparison.OrdinalIgnoreCase))
 						{
 							list.Add(text2);
 							list2.Add(j);
@@ -316,9 +319,10 @@ public class frmItemList : Form
 					HashSet<string> spoken;
 					num = localesByCode.TryGetValue(_line, out spoken) ? spoken.Count : list.Count;
 
-					// Fewer rows than languages means the languages share a row, and a shared row means one
-					// file serving all of them.
-					bool oneFileForAll = num > list.Count;
+					// One row and nothing else is what says a single file serves every language. Marking it
+					// whenever there were merely fewer rows than languages called an update shared when it
+					// had several files with a few languages doubling up on one of them.
+					bool oneFileForAll = list.Count == 1 && num > 1;
 
 					Update update = new Update
 					{

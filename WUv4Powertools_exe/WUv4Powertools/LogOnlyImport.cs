@@ -78,7 +78,15 @@ public static class LogOnlyImport
 					// A file for everybody is weighed against a language the update already has, so
 					// the row is put right once. Offering it in the rest of the languages happens
 					// after the import, where the whole update can be seen at once.
-					string locale = download.Locale ?? FirstLanguageOf(index, code);
+					// Its own language if the name states one, otherwise the language of the machine whose
+					// log this came from, and only then a language the update already has. Reaching for
+					// English first filed downloads from other machines under English.
+					string locale = download.Locale ?? download.LogLanguage ?? FirstLanguageOf(index, code);
+					if (locale != null && !index.HasLocale(code, locale) && download.Locale == null)
+					{
+						// The update is not held in that language, so there is no row to put right.
+						locale = FirstLanguageOf(index, code);
+					}
 					if (locale == null) continue;
 
 					string existing = index.ItemsLineFor(code, locale);
@@ -101,7 +109,7 @@ public static class LogOnlyImport
 						DownloadUrl = download.Url,
 						FileName = download.FileName,
 						SharedAcrossLanguages = download.Shared,
-						SourceFile = "Windows Update.log",
+						SourceFile = download.SourceFile ?? "Windows Update.log",
 						// A log records a download, never a publication, so it can offer no date and
 						// no title. Those only ever come from a catalogue file.
 						Title = string.Empty,
