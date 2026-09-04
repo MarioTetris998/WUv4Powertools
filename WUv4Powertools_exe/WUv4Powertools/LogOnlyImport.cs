@@ -10,19 +10,20 @@ namespace WUv4Powertools;
 // those two facts a log alone can fill in a missing language and put a wrong file name right.
 public static class LogOnlyImport
 {
-	// A language this update is already held in, preferring English. Used when the download names
-	// no language of its own because one file serves them all.
-	private static string FirstLanguageOf(ProviderIndex index, string code)
+	// The one language this update is held in, or null when it is held in none or in several.
+	// A download whose name states no language can only be placed where there is a single
+	// place for it to go.
+	private static string OnlyLanguageOf(ProviderIndex index, string code)
 	{
-		string first = null;
+		string only = null;
 		foreach (string locale in index.LocalesFor(code))
 		{
-			if (string.Equals(locale, "en", StringComparison.OrdinalIgnoreCase)) return locale;
+			if (only != null) return null;
 
-			if (first == null) first = locale;
+			only = locale;
 		}
 
-		return first;
+		return only;
 	}
 
 	// Builds candidates from the downloads a log recorded, for every provider in the folder that has
@@ -60,6 +61,9 @@ public static class LogOnlyImport
 			// system: a Windows ME download would overwrite the Windows Server 2003 one.
 			if (string.IsNullOrEmpty(download.ItemCode)) continue;
 
+			// Nothing carrying the restored service is ever taken from a log, address included.
+			if (LogImportParser.NamesRestoredService(download.Url)) continue;
+
 			// A file with no language tag in its name is the same download whatever language the
 			// machine runs, so it belongs to the update as a whole rather than to one language.
 			// Passing over it left an update that uses a single file untouched by an import that
@@ -75,18 +79,12 @@ public static class LogOnlyImport
 			{
 				foreach (string code in index.CodesMatching(download.ItemCode))
 				{
-					// A file for everybody is weighed against a language the update already has, so
-					// the row is put right once. Offering it in the rest of the languages happens
-					// after the import, where the whole update can be seen at once.
-					// Its own language if the name states one, otherwise the language of the machine whose
-					// log this came from, and only then a language the update already has. Reaching for
-					// English first filed downloads from other machines under English.
-					string locale = download.Locale ?? download.LogLanguage ?? FirstLanguageOf(index, code);
-					if (locale != null && !index.HasLocale(code, locale) && download.Locale == null)
-					{
-						// The update is not held in that language, so there is no row to put right.
-						locale = FirstLanguageOf(index, code);
-					}
+					// Where a download goes has to be known rather than guessed. Its own name states the
+					// language, or the update is held in one language alone and there is nowhere else it
+					// could belong. What language the machine ran says nothing about a file whose name
+					// states none, and a language the update happens to have is not evidence either, so a
+					// download answering to neither is left out rather than filed somewhere it may not go.
+					string locale = download.Locale ?? OnlyLanguageOf(index, code);
 					if (locale == null) continue;
 
 					string existing = index.ItemsLineFor(code, locale);

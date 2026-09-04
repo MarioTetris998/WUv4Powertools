@@ -1150,8 +1150,12 @@ public static class LogImportEngine
 		// The row each duplicate should give way to, by the identifier it used to have.
 		Dictionary<string, string> replacement =
 			new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		// Every row holding a given file, and the one of them worth keeping.
+		Dictionary<string, List<string>> rowsByFile =
+			new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 		Dictionary<string, string> keptByFile =
 			new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		HashSet<string> keptIsOfficial = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
 		foreach (string line in items)
 		{
@@ -1164,15 +1168,36 @@ public static class LogImportEngine
 			if (address == null || guid == null) continue;
 
 			string key = code + "|" + address;
-			string keptGuid;
-			if (!keptByFile.TryGetValue(key, out keptGuid))
+			List<string> holders;
+			if (!rowsByFile.TryGetValue(key, out holders))
+			{
+				holders = new List<string>();
+				rowsByFile[key] = holders;
+			}
+			if (!holders.Contains(guid, StringComparer.OrdinalIgnoreCase)) holders.Add(guid);
+
+			// The one file offered from two places is kept from Microsoft's. Keeping whichever row
+			// came first handed every language the restored address and threw the official one
+			// away.
+			bool official = !LogImportParser.NamesRestoredService(ValueOf(line, "codeBase href=\"", "\""));
+			if (!keptByFile.ContainsKey(key))
 			{
 				keptByFile[key] = guid;
-				continue;
+				if (official) keptIsOfficial.Add(key);
 			}
-			if (!string.Equals(keptGuid, guid, StringComparison.OrdinalIgnoreCase))
+			else if (official && !keptIsOfficial.Contains(key))
 			{
-				replacement[guid] = keptGuid;
+				keptByFile[key] = guid;
+				keptIsOfficial.Add(key);
+			}
+		}
+
+		foreach (KeyValuePair<string, List<string>> pair in rowsByFile)
+		{
+			string kept = keptByFile[pair.Key];
+			foreach (string guid in pair.Value)
+			{
+				if (!string.Equals(guid, kept, StringComparison.OrdinalIgnoreCase)) replacement[guid] = kept;
 			}
 		}
 		if (replacement.Count == 0) return 0;
