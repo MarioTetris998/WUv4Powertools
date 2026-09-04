@@ -319,10 +319,12 @@ public class frmItemList : Form
 					HashSet<string> spoken;
 					num = localesByCode.TryGetValue(_line, out spoken) ? spoken.Count : list.Count;
 
-					// One row and nothing else is what says a single file serves every language. Marking it
-					// whenever there were merely fewer rows than languages called an update shared when it
-					// had several files with a few languages doubling up on one of them.
-					bool oneFileForAll = list.Count == 1 && num > 1;
+					// One row whose file name states no language at all. That is what a download built for
+					// everybody looks like. A single row is not enough on its own: a build made for one
+					// language, named for it, can still end up serving two, and calling that one file for
+					// every language is wrong.
+					bool oneFileForAll = list.Count == 1 && num > 1 &&
+						LogImportParser.LanguageTokenOf(LeafOfInstallation(array2)) == null;
 
 					Update update = new Update
 					{
@@ -858,6 +860,24 @@ catch (Exception ex)
 
 	// The L. Count column, fourth in the list after the name, code and prerequisites.
 	private const int LanguageCountColumn = 3;
+
+	// The file name an update's row downloads, taken from the installation block. Null when the
+	// row names no address.
+	private static string LeafOfInstallation(string[] fields)
+	{
+		if (fields == null || fields.Length < 6) return null;
+
+		int at = fields[5].IndexOf("codeBase href=\"", StringComparison.Ordinal);
+		if (at < 0) return null;
+
+		at += "codeBase href=\"".Length;
+		int end = fields[5].IndexOf('"', at);
+		if (end < 0) return null;
+
+		string href = fields[5].Substring(at, end - at);
+		int slash = href.LastIndexOf('/');
+		return slash < 0 ? href : href.Substring(slash + 1);
+	}
 
 	private static string CodeOfItemsLine(string itemsLine)
 	{

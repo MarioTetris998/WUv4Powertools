@@ -420,6 +420,8 @@ public sealed class ImportSummary
 
 	public int FileNamesCorrected;
 
+	public int RowsSplit;
+
 	public int DatesCorrected;
 
 	// Updates whose code was respelled to the capitals the service published.
@@ -1071,19 +1073,49 @@ public static class LogImportEngine
 		return comma <= 0 ? null : line.Substring(0, comma).Trim();
 	}
 
-	// The address a row downloads from, with the hash the cabpool appends taken off the file name.
-	// The whole address matters, not just the file name: the language often sits in the path, as
-	// in selfupd/x86/w98/de/cun.cab, so two languages can name the same file and still be two
-	// different downloads.
+	// What identifies the file a row downloads. The cabpool appended a hash of the file's own
+	// contents to its name, so two rows carrying the same hash are the same file no matter what
+	// address they were fetched from: the very same cabinet is served from more than one host
+	// and more than one folder. Weighing the whole address instead left one file looking like
+	// several. Where there is no hash the whole address is used, because then the folder is all
+	// there is to tell one language's file from another, as in selfupd/x86/w98/de/cun.cab.
 	private static string DownloadKey(string itemLine)
 	{
 		string href = ValueOf(itemLine, "codeBase href=\"", "\"");
 		if (string.IsNullOrEmpty(href)) return null;
 
 		int slash = href.LastIndexOf('/');
-		if (slash < 0) return LogImportParser.StripHash(href);
+		string leaf = slash < 0 ? href : href.Substring(slash + 1);
 
-		return href.Substring(0, slash + 1) + LogImportParser.StripHash(href.Substring(slash + 1));
+		// A hash tells two files apart by what is inside them, which is what makes it possible to
+		// see one download served from two hosts as the one file. It cannot stand on its own
+		// though: a folder can hold a build per language whose names all carry the same hash, and
+		// treating those as one file would hand every language the English download. The language
+		// the name states is therefore part of the answer, so builds naming different languages
+		// stay apart however their hashes read.
+		string hash = ContentHashOf(leaf);
+		if (hash != null)
+		{
+			string tag = LogImportParser.LanguageTokenOf(leaf);
+			return "hash:" + hash + (tag == null ? string.Empty : "|" + tag.ToLowerInvariant());
+		}
+
+		string folder = slash < 0 ? string.Empty : href.Substring(0, slash + 1);
+		return folder + LogImportParser.StripHash(leaf);
+	}
+
+	// The content hash the cabpool appended after the last underscore, or null when the name
+	// carries none. Short trailing digits are not treated as one, so a name that merely ends in
+	// a number is never mistaken for a hashed file.
+	private static string ContentHashOf(string fileName)
+	{
+		if (string.IsNullOrEmpty(fileName)) return null;
+
+		int dot = fileName.LastIndexOf('.');
+		string stem = dot < 0 ? fileName : fileName.Substring(0, dot);
+		System.Text.RegularExpressions.Match m =
+			System.Text.RegularExpressions.Regex.Match(stem, @"_([0-9a-fA-F]{16,})$");
+		return m.Success ? m.Groups[1].Value.ToLowerInvariant() : null;
 	}
 
 	// A row of this update that downloads from the same address as the one given. Null when no
@@ -1195,6 +1227,58 @@ public static class LogImportEngine
 		}
 
 		return null;
+	}
+
+	// How many languages point at one row as the entries stand now. A row holds a single address,
+	// so anything written on it is written for every language counted here.
+	private static int LanguagesOnRow(List<string> itemsIndex, string code, string guid)
+	{
+		if (itemsIndex == null || string.IsNullOrEmpty(code) || string.IsNullOrEmpty(guid)) return 0;
+
+		int sharing = 0;
+		foreach (string entry in itemsIndex)
+		{
+			if (string.IsNullOrEmpty(entry)) continue;
+
+			string head = entry.Split(Sep, StringSplitOptions.None)[0];
+			int comma = head.LastIndexOf(',');
+			if (comma <= 0) continue;
+			if (!string.Equals(head.Substring(comma + 1).Trim(), guid, StringComparison.OrdinalIgnoreCase)) continue;
+
+			string[] parts = head.Substring(0, comma).Split('.');
+			if (parts.Length < 15) continue;
+			if (!string.Equals(parts[13], code, StringComparison.OrdinalIgnoreCase)) continue;
+
+			sharing++;
+		}
+
+		return sharing;
+	}
+
+	// Sends one language's entry to another row, leaving every other language where it was.
+	private static bool PointLanguageAt(List<string> itemsIndex, string code, string locale, string guid)
+	{
+		if (itemsIndex == null || string.IsNullOrEmpty(code)) return false;
+
+		bool moved = false;
+		for (int i = 0; i < itemsIndex.Count; i++)
+		{
+			if (string.IsNullOrEmpty(itemsIndex[i])) continue;
+
+			string head = itemsIndex[i].Split(Sep, StringSplitOptions.None)[0];
+			int comma = head.LastIndexOf(',');
+			if (comma <= 0) continue;
+
+			string[] parts = head.Substring(0, comma).Split('.');
+			if (parts.Length < 15) continue;
+			if (!string.Equals(parts[13], code, StringComparison.OrdinalIgnoreCase)) continue;
+			if (!string.Equals(parts[6], locale, StringComparison.OrdinalIgnoreCase)) continue;
+
+			itemsIndex[i] = head.Substring(0, comma + 1) + guid + itemsIndex[i].Substring(head.Length);
+			moved = true;
+		}
+
+		return moved;
 	}
 
 	// The version is the final field of the identifier, as in com_microsoft.agent2_95.2_00_0_2202.
@@ -1371,6 +1455,23 @@ public static class LogImportEngine
 			summary.Notes.Add(store.Name + ": " + c.Code + " (" + locale +
 				") skipped, the row it names is not there");
 			return;
+		}
+
+		// A row shared by several languages carries one address for all of them, so writing this
+		// language's file onto it would hand its download to every other language on the row. Where
+		// the source states a build of this language's own, it is moved onto a row of its own and
+		// the languages it was sharing with keep the file they had.
+		if (c.Fix.FileName && !string.IsNullOrEmpty(c.DownloadUrl) &&
+			LanguagesOnRow(itemsIndex, c.Code, oldGuid) > 1)
+		{
+			string ownGuid = Guid.NewGuid().ToString().ToUpper();
+			if (PointLanguageAt(itemsIndex, c.Code, locale, ownGuid))
+			{
+				items.Add(ownGuid + items[itemAt].Substring(oldGuid.Length));
+				itemAt = items.Count - 1;
+				oldGuid = ownGuid;
+				summary.RowsSplit++;
+			}
 		}
 
 		string[] fields = items[itemAt].Split(Sep, StringSplitOptions.None);
