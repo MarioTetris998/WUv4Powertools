@@ -829,6 +829,19 @@ public static class LogImportParser
 
 	// Tried in order of how much the match can be trusted: the same name, then a name the code
 	// merely starts with, then the same article number provided the languages agree.
+	// Whether a download may be used for this language. A file whose name states a language is
+	// that language's own and no other's, while a name with no language tag is the one file
+	// every language downloads. Only the last of the searches below used to weigh this, so an
+	// English file matched on its update code alone and ended up on the Czech row.
+	private static bool Fits(LogEntry e, string language)
+	{
+		if (e == null) return false;
+		if (e.Locale == null) return true;
+		if (string.IsNullOrEmpty(language)) return false;
+
+		return string.Equals(e.Locale, language, StringComparison.OrdinalIgnoreCase);
+	}
+
 	private static LogEntry Lookup(List<LogEntry> downloads, string language, params string[] keys)
 	{
 		// The log states which update a download belongs to, so that is tried before anything is
@@ -839,6 +852,7 @@ public static class LogImportParser
 			if (string.IsNullOrEmpty(key)) continue;
 			foreach (LogEntry e in downloads)
 			{
+				if (!Fits(e, language)) continue;
 				if (string.Equals(e.ItemCode, key, StringComparison.OrdinalIgnoreCase)) return e;
 			}
 		}
@@ -848,6 +862,7 @@ public static class LogImportParser
 			if (string.IsNullOrEmpty(key)) continue;
 			foreach (LogEntry e in downloads)
 			{
+				if (!Fits(e, language)) continue;
 				if (string.Equals(e.Core, key, StringComparison.OrdinalIgnoreCase)) return e;
 			}
 		}
@@ -857,6 +872,7 @@ public static class LogImportParser
 			if (string.IsNullOrEmpty(key)) continue;
 			foreach (LogEntry e in downloads)
 			{
+				if (!Fits(e, language)) continue;
 				if (!string.IsNullOrEmpty(e.ItemCode) &&
 					!string.Equals(e.ItemCode, key, StringComparison.OrdinalIgnoreCase)) continue;
 				if (e.Core != null && e.Core.Length >= 6 &&
@@ -877,8 +893,7 @@ public static class LogImportParser
 				if (!string.IsNullOrEmpty(e.ItemCode) &&
 					!string.Equals(e.ItemCode, key, StringComparison.OrdinalIgnoreCase)) continue;
 
-				// A language specific file is only accepted for the language it was built for.
-				if (e.Locale != null && !string.Equals(e.Locale, language, StringComparison.OrdinalIgnoreCase)) continue;
+				if (!Fits(e, language)) continue;
 				return e;
 			}
 		}

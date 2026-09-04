@@ -82,6 +82,8 @@ public class frmImportLogs : Form
 	private Label lblLog;
 	private Button btnPickXml;
 	private Button btnPickLog;
+
+	private Button btnPickFolder;
 	private Label lblLanguage;
 	private ComboBox cmbLanguage;
 	private Label lblBasis;
@@ -114,6 +116,7 @@ public class frmImportLogs : Form
 		this.lblLog = new Label();
 		this.btnPickXml = new Button();
 		this.btnPickLog = new Button();
+		this.btnPickFolder = new Button();
 		this.lblLanguage = new Label();
 		this.cmbLanguage = new ComboBox();
 		this.lblBasis = new Label();
@@ -147,6 +150,15 @@ public class frmImportLogs : Form
 		this.btnPickLog.Text = "Choose the log...";
 		this.btnPickLog.UseVisualStyleBackColor = true;
 		this.btnPickLog.Click += new EventHandler(this.btnPickLog_Click);
+
+		// Everything in one folder at once, with each file read on its own terms. The language
+		// box is left out of it: every file states which system, which browser version and
+		// which language it came from, and that beats one choice made for the whole run.
+		this.btnPickFolder.Location = new Point(266, 43);
+		this.btnPickFolder.Size = new Size(190, 25);
+		this.btnPickFolder.Text = "Import a whole folder...";
+		this.btnPickFolder.UseVisualStyleBackColor = true;
+		this.btnPickFolder.Click += new EventHandler(this.btnPickFolder_Click);
 
 		this.lblLog.AutoSize = true;
 		this.lblLog.Location = new Point(140, 49);
@@ -275,6 +287,7 @@ public class frmImportLogs : Form
 		this.Controls.Add(this.btnPickXml);
 		this.Controls.Add(this.lblXml);
 		this.Controls.Add(this.btnPickLog);
+		this.Controls.Add(this.btnPickFolder);
 		this.Controls.Add(this.lblLog);
 		this.Controls.Add(this.lblRejected);
 		this.Controls.Add(this.lblLanguage);
@@ -328,6 +341,51 @@ public class frmImportLogs : Form
 				string.Join(", ", dictionary.Unavailable.ToArray());
 			tips.SetToolTip(lblRejected, lblRejected.Text);
 		}
+	}
+
+	// Takes every history file and every log in one folder, and its subfolders, in a single go.
+	// Each file says which system, which browser version and which language it belongs to, so
+	// nothing has to be chosen by hand and the language box is ignored for the whole run.
+	private void btnPickFolder_Click(object sender, EventArgs e)
+	{
+		using (FolderBrowserDialog dialog = new FolderBrowserDialog())
+		{
+			dialog.Description = "Choose a folder holding history files and logs. Everything in it, and in the folders inside it, is read at once.";
+			if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+			string[] found;
+			try
+			{
+				found = Directory.GetFiles(dialog.SelectedPath, "*.*", SearchOption.AllDirectories);
+			}
+			catch (Exception ex)
+			{
+				MessageBox.Show("That folder could not be read.\n\n" + ex.Message,
+					"Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Hand);
+				return;
+			}
+
+			xmlFiles.Clear();
+			logFiles.Clear();
+			foreach (string file in found)
+			{
+				string extension = Path.GetExtension(file);
+				if (string.Equals(extension, ".xml", StringComparison.OrdinalIgnoreCase)) xmlFiles.Add(file);
+				else if (string.Equals(extension, ".log", StringComparison.OrdinalIgnoreCase)) logFiles.Add(file);
+			}
+
+			if (xmlFiles.Count == 0 && logFiles.Count == 0)
+			{
+				MessageBox.Show("That folder holds no history files and no logs.",
+					"Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
+				return;
+			}
+
+			// One language chosen for the whole run is exactly what goes wrong here, so it is
+			// turned off and each entry keeps the language its own file states.
+			chkOverride.Checked = false;
+		}
+		Reparse();
 	}
 
 	private void btnPickXml_Click(object sender, EventArgs e)
