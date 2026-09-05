@@ -280,13 +280,27 @@ public static class LogImportNewItems
 		{
 			string leaf = LogImportEngine.LeafOfLine(existingItemsLine);
 
-			// The address carries the hash the cabpool appended, while the log records the path the
-			// file was saved to and so names it without one. They are the same file, so the hash comes
-			// off both before they are weighed up. Skipping this offers a correction that never settles
-			// and, worse, replaces a hashed address with a name that would not resolve.
-			correction.FileName = leaf != null &&
-				!string.Equals(LogImportParser.StripHash(leaf),
-					LogImportParser.StripHash(c.FileName), StringComparison.OrdinalIgnoreCase);
+			// Where both name a file in the cabpool, the hashes settle it. One name covers several
+			// builds: msgames.cab is a different file in Chinese from the one in English and the
+			// name never says so, and taking the hash off both made those two look like the same
+			// file, so a language sitting on the wrong build was never put right.
+			//
+			// Where one of them carries no hash the comparison falls back to the names without
+			// theirs, because a log records the path a file was saved to and that never has one.
+			// Weighing a saved path against a hashed address offers a correction that never settles
+			// and replaces a working address with a name that would not resolve.
+			string held = LogImportParser.HashOf(leaf);
+			string stated = LogImportParser.HashOf(c.FileName);
+			if (held != null && stated != null)
+			{
+				correction.FileName = !string.Equals(held, stated, StringComparison.OrdinalIgnoreCase);
+			}
+			else
+			{
+				correction.FileName = leaf != null &&
+					!string.Equals(LogImportParser.StripHash(leaf),
+						LogImportParser.StripHash(c.FileName), StringComparison.OrdinalIgnoreCase);
+			}
 		}
 
 		return correction;

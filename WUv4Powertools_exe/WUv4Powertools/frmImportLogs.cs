@@ -899,7 +899,8 @@ public class frmImportLogs : Form
 		{
 			sb.AppendLine();
 			sb.AppendLine(summary.GuessedNames + " had no download in the logs, so the file name was worked " +
-				"out from how this update is named in the languages you already have. Check these:");
+				"out from how this update is named in the languages you already have, and no address was " +
+				"written for them. Check these:");
 			foreach (string guess in summary.Guesses.Take(10))
 			{
 				sb.AppendLine("   " + guess);

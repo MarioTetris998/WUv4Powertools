@@ -92,11 +92,17 @@ public static class LogOnlyImport
 
 					// The file the provider records for this language, if it has one at all.
 					string currentLeaf = present ? LogImportEngine.LeafOfLine(existing) : null;
-					// Compared without the cabpool hash, which the address carries and the saved path does
-					// not, so a name that is already right is not offered again every time.
-					bool sameFile = currentLeaf != null &&
-						string.Equals(LogImportParser.StripHash(currentLeaf),
-							LogImportParser.StripHash(download.FileName), StringComparison.OrdinalIgnoreCase);
+					// Where both name a file in the cabpool the hashes settle it, since one name covers
+					// more than one build. Otherwise they are weighed without their hashes, which the
+					// address carries and a saved path does not, so a name already right is not offered
+					// again every time.
+					string heldHash = currentLeaf == null ? null : LogImportParser.HashOf(currentLeaf);
+					string statedHash = LogImportParser.HashOf(download.FileName);
+					bool sameFile = heldHash != null && statedHash != null
+						? string.Equals(heldHash, statedHash, StringComparison.OrdinalIgnoreCase)
+						: currentLeaf != null &&
+							string.Equals(LogImportParser.StripHash(currentLeaf),
+								LogImportParser.StripHash(download.FileName), StringComparison.OrdinalIgnoreCase);
 					if (present && sameFile) continue;
 
 					ImportCandidate candidate = new ImportCandidate

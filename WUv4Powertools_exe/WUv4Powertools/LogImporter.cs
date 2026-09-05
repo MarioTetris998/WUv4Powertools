@@ -385,6 +385,88 @@ public static class LogImportParser
 		}
 	}
 
+	// The value seen most often, or null when there is nothing to go on.
+	private static string Commonest(List<string> votes)
+	{
+		if (votes == null || votes.Count == 0) return null;
+
+		return votes.GroupBy(v => v).OrderByDescending(g => g.Count()).First().Key;
+	}
+
+	// The content hash the cabpool appended after the last underscore, or null when the name
+	// carries none. A short run of trailing digits is not one, so a name merely ending in a
+	// number is never mistaken for a hashed file.
+	internal static string HashOf(string fileName)
+	{
+		if (string.IsNullOrEmpty(fileName)) return null;
+
+		int dot = fileName.LastIndexOf('.');
+		string stem = dot < 0 ? fileName : fileName.Substring(0, dot);
+		Match m = Regex.Match(stem, @"_([0-9a-fA-F]{16,})$");
+		return m.Success ? m.Groups[1].Value.ToLowerInvariant() : null;
+	}
+
+	// Works out, among the downloads whose names state no language, which are one file serving
+	// every language and which are a build per language that simply never said so.
+	//
+	// The name alone cannot tell those apart: msgames.cab and crlupd.exe are written the same way
+	// and only one of them is the same file everywhere. What does tell them apart is the content
+	// hash set beside the language of the machine that fetched it. One hash fetched by machines of
+	// two or more languages is one file serving them, and that is the only thing taken as proof of
+	// sharing. Two hashes under one name are two builds, and each belongs to the language that
+	// fetched it and to no other.
+	private static void DecideSharing(List<LogEntry> downloads)
+	{
+		if (downloads == null) return;
+
+		Dictionary<string, List<LogEntry>> byName =
+			new Dictionary<string, List<LogEntry>>(StringComparer.OrdinalIgnoreCase);
+		foreach (LogEntry e in downloads)
+		{
+			// A name that states its own language needs none of this.
+			if (e == null || e.Locale != null || string.IsNullOrEmpty(e.FileName)) continue;
+
+			string bare = StripHash(e.FileName);
+			if (string.IsNullOrEmpty(bare)) continue;
+
+			List<LogEntry> group;
+			if (!byName.TryGetValue(bare, out group))
+			{
+				group = new List<LogEntry>();
+				byName[bare] = group;
+			}
+			group.Add(e);
+		}
+
+		foreach (KeyValuePair<string, List<LogEntry>> pair in byName)
+		{
+			HashSet<string> hashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			HashSet<string> spoken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			foreach (LogEntry e in pair.Value)
+			{
+				if (e.Hash != null) hashes.Add(e.Hash);
+				if (e.MachineLanguage != null) spoken.Add(e.MachineLanguage);
+			}
+
+			// One file, fetched by machines of more than one language. Those languages share it, and
+			// only those: a language nothing was ever seen fetching it on is not among them.
+			bool oneFileForSeveral = hashes.Count == 1 && spoken.Count >= 2;
+			foreach (LogEntry e in pair.Value)
+			{
+				if (oneFileForSeveral)
+				{
+					e.Shared = true;
+					e.ConfirmedLanguages = spoken;
+				}
+				else
+				{
+					// A build of its own, belonging to the machine that fetched it and nowhere else.
+					e.Locale = e.MachineLanguage;
+				}
+			}
+		}
+	}
+
 	public static LogImportResult Parse(IEnumerable<string> xmlPaths, IEnumerable<string> logPaths)
 	{
 		LogImportResult result = new LogImportResult();
@@ -398,22 +480,32 @@ public static class LogImportParser
 		{
 			if (!Usable(path, result)) continue;
 
-			// Weighed one file at a time, and only ever to suggest a language to the person doing
-			// the import. Nothing is filed by it: what a machine speaks says nothing about a file
-			// whose name states no language.
+			// Weighed one file at a time. A machine's own language is what its log observes, and for a
+			// download whose name states no language it is the only record of who fetched it. Pooling
+			// every log's votes together picked one language for the whole run, which filed a folder of
+			// logs from machines in different languages under whichever won the count.
 			int firstDownload = downloads.Count;
 			List<string> pathsHere = new List<string>();
 			List<string> tokensHere = new List<string>();
 			ReadLog(path, downloads, pathsHere, tokensHere, result);
 
+			// A tag in a file this machine fetched states its language outright, so it is believed
+			// before the localised folder name in its paths.
+			string spoken = Commonest(tokensHere) ?? Commonest(pathsHere);
 			for (int i = firstDownload; i < downloads.Count; i++)
 			{
 				downloads[i].SourceFile = Path.GetFileName(path);
+				downloads[i].MachineLanguage = spoken;
 			}
 
 			pathLanguageVotes.AddRange(pathsHere);
 			tokenLanguageVotes.AddRange(tokensHere);
 		}
+
+		// Settled before any history file is read, because reading one asks which language each
+		// download belongs to, and until this has run the answer for every download whose name
+		// states no language is not known yet.
+		DecideSharing(downloads);
 
 		foreach (string path in xmlPaths ?? Enumerable.Empty<string>())
 		{
@@ -500,8 +592,22 @@ public static class LogImportParser
 		// The file name with the trailing content hash removed, which is what a code is compared against.
 		public string Core;
 
-		// Null when the file name carried no language tag, meaning it served every language.
+		// The language this download belongs to. From the tag in its name where there is one, and
+		// otherwise from the language of the machine that fetched it. Null when neither is known.
 		public string Locale;
+
+		// The language of the machine whose log recorded this download. An observation rather than
+		// a reading of the file name.
+		public string MachineLanguage;
+
+		// The content hash the cabpool put after the last underscore, which is what tells one build
+		// of a file from another where the name itself never says.
+		public string Hash;
+
+		// The languages proven to fetch this very file, set only where machines of two or more
+		// languages were seen fetching the same content. Null everywhere else, which is what keeps a
+		// file from being handed to a language nothing was ever recorded fetching it on.
+		public HashSet<string> ConfirmedLanguages;
 
 		public string SourceFile;
 
@@ -616,7 +722,8 @@ public static class LogImportParser
 					{
 						Url = url,
 						FileName = file,
-						Shared = token == null,
+						Shared = false,
+					Hash = HashOf(file),
 						Core = StripLanguageToken(core, token),
 						Locale = token != null && TokenLocales.ContainsKey(token) ? TokenLocales[token] : null,
 						Article = ArticleOf(core)
@@ -664,6 +771,12 @@ public static class LogImportParser
 		// like IE6.0sp1-KB837009-x86-PLK keeps its own dots.
 		int dot = name.LastIndexOf('.');
 		string stem = dot > 0 && name.Length - dot <= 5 ? name.Substring(0, dot) : name;
+
+		// The cabpool hash hides it just as well. 888113USA8 states its language at the end of
+		// the name, and as 888113USA8_3D4C7D12F883... it no longer does, so that whole family
+		// read as serving every language and their files were handed around between languages.
+		Match hashed = Regex.Match(stem, @"^(.*)_[0-9a-fA-F]{8,}$");
+		if (hashed.Success) stem = hashed.Groups[1].Value;
 
 		foreach (string token in LanguageTokens)
 		{
@@ -827,17 +940,16 @@ public static class LogImportParser
 		}
 	}
 
-	// Tried in order of how much the match can be trusted: the same name, then a name the code
-	// merely starts with, then the same article number provided the languages agree.
-	// Whether a download may be used for this language. A file whose name states a language is
-	// that language's own and no other's, while a name with no language tag is the one file
-	// every language downloads. Only the last of the searches below used to weigh this, so an
-	// English file matched on its update code alone and ended up on the Czech row.
+	// Whether a download may answer for a language. A name that states its language answers for
+	// that one alone. A name that states none answers for the languages machines were actually
+	// seen fetching it on and for no others: taking such a file to serve everybody handed one
+	// language's build to the rest.
 	private static bool Fits(LogEntry e, string language)
 	{
-		if (e == null) return false;
-		if (e.Locale == null) return true;
-		if (string.IsNullOrEmpty(language)) return false;
+		if (e == null || string.IsNullOrEmpty(language)) return false;
+
+		if (e.ConfirmedLanguages != null) return e.ConfirmedLanguages.Contains(language);
+		if (e.Locale == null) return false;
 
 		return string.Equals(e.Locale, language, StringComparison.OrdinalIgnoreCase);
 	}
@@ -863,6 +975,12 @@ public static class LogImportParser
 			foreach (LogEntry e in downloads)
 			{
 				if (!Fits(e, language)) continue;
+
+				// A download the log already tied to another update is never taken on the strength of
+				// its name matching this one. The log stating which update it belongs to outranks any
+				// resemblance between the name and the code.
+				if (!string.IsNullOrEmpty(e.ItemCode) &&
+					!string.Equals(e.ItemCode, key, StringComparison.OrdinalIgnoreCase)) continue;
 				if (string.Equals(e.Core, key, StringComparison.OrdinalIgnoreCase)) return e;
 			}
 		}
