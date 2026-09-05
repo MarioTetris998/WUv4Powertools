@@ -803,6 +803,10 @@ public class frmImportLogs : Form
 			return;
 		}
 
+		// Where the copies of the replaced files go, asked now because this is the moment they
+		// are about to be made and nothing has been written yet.
+		if (!AskWhereBackupsGo()) return;
+
 		ImportSummary summary;
 		Cursor = Cursors.WaitCursor;
 		try
@@ -820,6 +824,38 @@ public class frmImportLogs : Form
 
 		DialogResult = DialogResult.OK;
 		Close();
+	}
+
+	// Asks where the copy of each replaced file should go, and remembers the answer for next time.
+	//
+	// Asked here rather than tucked away in a menu, because this is the one moment it matters: the
+	// import writes to the inventory files themselves, and the copies it leaves behind are the only
+	// way back. Said no to, the copies go beside the originals as they always have.
+	private bool AskWhereBackupsGo()
+	{
+		string current = Backups.Folder;
+		string where = current.Length == 0
+			? "beside the inventory files themselves"
+			: current;
+
+		DialogResult answer = MessageBox.Show(this,
+			"The files being replaced are kept as .bak.\n\n" +
+			"They currently go: " + where + "\n\n" +
+			"Choose a folder for them?",
+			"Windows Update v4.0 PowerTools", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+
+		if (answer == DialogResult.Cancel) return false;
+		if (answer == DialogResult.No) return true;
+
+		using (FolderBrowserDialog dialog = new FolderBrowserDialog())
+		{
+			dialog.Description = "Choose where the backup of a replaced file goes. Each provider gets a folder of its own inside it.";
+			if (current.Length > 0) dialog.SelectedPath = current;
+			if (dialog.ShowDialog(this) != DialogResult.OK) return false;
+
+			Backups.Folder = dialog.SelectedPath;
+		}
+		return true;
 	}
 
 	private static string Report(ImportSummary summary)
