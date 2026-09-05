@@ -1407,11 +1407,7 @@ public class frmAddUpdate : Form
 				long contentLength = 0;
 				try
 				{
-					HttpWebRequest request = (HttpWebRequest)WebRequest.Create(new Uri(_txtDLink));
-					request.Timeout = 5000; // 5 second timeout
-					HttpWebResponse obj2 = (HttpWebResponse)request.GetResponse();
-					contentLength = obj2.ContentLength;
-					obj2.Close();
+					contentLength = LinkCheck.SizeOf(_txtDLink);
 				}
 				catch
 				{
@@ -1456,11 +1452,7 @@ public class frmAddUpdate : Form
 					long langContentLength = 0;
 					try
 					{
-						HttpWebRequest langRequest = (HttpWebRequest)WebRequest.Create(new Uri(langDLink));
-						langRequest.Timeout = 5000;
-						HttpWebResponse langResponse = (HttpWebResponse)langRequest.GetResponse();
-						langContentLength = langResponse.ContentLength;
-						langResponse.Close();
+						langContentLength = LinkCheck.SizeOf(langDLink);
 					}
 					catch { langContentLength = 0; }
 					

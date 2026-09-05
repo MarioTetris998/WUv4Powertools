@@ -778,6 +778,12 @@ public static class LogImportEngine
 			{
 				installation = SetDownload(installation, c.DownloadUrl, c.FileName, c.Size, c.CleanFileName);
 			}
+			else if (SharesAConfirmedFile(sibling, confirmed))
+			{
+				// One file the logs prove serves several languages, so the entry being copied states
+				// this language's download as well. Its address and its name are both right here and
+				// neither is worked out again.
+			}
 			else
 			{
 				// Nothing recorded what this language downloads. The only entry to copy from is another
@@ -1114,6 +1120,30 @@ public static class LogImportEngine
 	// the same update hold the same download, the first is kept, every index entry naming the
 	// others is pointed at it, and the others are taken out. Returns how many rows went.
 	// A null set of codes means every update in the inventory.
+	// How many languages an update reaches, counted from the entries as they stand.
+	private static int LanguagesOfCode(List<string> itemsIndex, string code)
+	{
+		if (itemsIndex == null || string.IsNullOrEmpty(code)) return 0;
+
+		HashSet<string> locales = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (string entry in itemsIndex)
+		{
+			if (string.IsNullOrEmpty(entry)) continue;
+
+			string head = entry.Split(Sep, StringSplitOptions.None)[0];
+			int comma = head.LastIndexOf(',');
+			if (comma <= 0) continue;
+
+			string[] parts = head.Substring(0, comma).Split('.');
+			if (parts.Length < 15) continue;
+			if (!string.Equals(parts[13], code, StringComparison.OrdinalIgnoreCase)) continue;
+
+			locales.Add(parts[6]);
+		}
+
+		return locales.Count;
+	}
+
 	// Whether the entry being copied holds a file the logs prove more than one language fetches.
 	// That is the one case where another language's entry states this language's download too.
 	private static bool SharesAConfirmedFile(string itemsLine, HashSet<string> confirmed)
@@ -1164,7 +1194,6 @@ public static class LogImportEngine
 				only = line;
 			}
 			if (rows != 1 || only == null) continue;
-			if (!SharesAConfirmedFile(only, confirmed)) continue;
 
 			string leaf = LeafOfLine(only);
 			if (leaf == null || LogImportParser.LanguageTokenOf(leaf) != null) continue;
@@ -1194,6 +1223,11 @@ public static class LogImportEngine
 				if (template == null) template = id;
 			}
 			if (template == null) continue;
+
+			// A source stating machines of several languages fetched this file, or the update
+			// already reaching more than one language on it. Either shows it is one file rather
+			// than a build per language. Neither holding, nothing is offered around.
+			if (present.Count < 2 && !SharesAConfirmedFile(only, confirmed)) continue;
 
 			foreach (string locale in served)
 			{
@@ -1310,12 +1344,18 @@ public static class LogImportEngine
 			}
 			if (files.Count != 1) continue;
 
-			// Every row naming one file is not enough on its own. A source has to state that this
-			// very file is fetched by more than one language, or the update simply has one build
-			// here and the rest are missing, and handing this one round would be a guess.
+			// Every row naming one file is not enough on its own, since the update may simply have
+			// one build here and the rest missing. What settles it is a source stating machines of
+			// several languages fetched this very file, or the update already reaching more than
+			// one language on it. Either shows the file is not built per language.
 			string only = null;
 			foreach (string f in files) only = f;
-			if (confirmed == null || only == null || !confirmed.Contains(only)) continue;
+			if (only == null) continue;
+			if ((confirmed == null || !confirmed.Contains(only)) &&
+				LanguagesOfCode(itemsIndex, pair.Key) < 2)
+			{
+				continue;
+			}
 
 			string keep = restored ?? english ?? any;
 			if (string.IsNullOrEmpty(keep)) continue;
@@ -1503,6 +1543,17 @@ public static class LogImportEngine
 		{
 			summary.Skipped++;
 			summary.Notes.Add(store.Name + ": " + c.Code + " skipped, the log gave no identifier for it");
+			return;
+		}
+
+		// An entry with no address names an update nobody can fetch, so it is not written at all.
+		// A history file states that a machine installed something but never where it came from,
+		// and only a log carries that, so an update seen in a history file alone is left out.
+		if (string.IsNullOrEmpty(c.DownloadUrl))
+		{
+			summary.LeftOutForWantOfADownload++;
+			summary.Notes.Add(store.Name + ": " + c.Code + " (" + locale +
+				") left out, nothing states which file that language downloads");
 			return;
 		}
 

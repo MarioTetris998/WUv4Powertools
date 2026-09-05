@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
@@ -91,11 +91,7 @@ public class frmAddLanguage : Form
 	{
 		try
 		{
-			WebRequest webRequest = WebRequest.Create(url);
-			webRequest.Timeout = 2000;
-			webRequest.Method = "HEAD";
-			using HttpWebResponse response = (HttpWebResponse)webRequest.GetResponse();
-			response.Close();
+			using HttpWebResponse response = LinkCheck.Ask(url);
 			return response.StatusCode == HttpStatusCode.OK;
 		}
 		catch (Exception)
@@ -155,7 +151,7 @@ public class frmAddLanguage : Form
 		{
 			try
 			{
-				HttpWebResponse response = (HttpWebResponse)((HttpWebRequest)WebRequest.Create(new Uri(txtDLink.Text))).GetResponse();
+				HttpWebResponse response = LinkCheck.Ask(txtDLink.Text);
 				response.Close();
 				addLang(response);
 				return;

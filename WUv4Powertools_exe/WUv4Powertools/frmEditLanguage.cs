@@ -82,7 +82,8 @@ public class frmEditLanguage : Form
 					uLangs.Add(updEdit);
 					if (baseIndex == null)
 					{
-						baseIndex = line.Replace(lang, "{0}").Replace(guid, "{1}");
+						// Only the language field, not every place those two letters happen to appear.
+					baseIndex = line.Replace("." + lang + ".", ".{0}.").Replace(guid, "{1}");
 					}
 				}
 			}
@@ -171,9 +172,7 @@ public class frmEditLanguage : Form
 		{
 			// One request regardless of how many languages are being pointed at it, since they all
 			// end up on the same file.
-			HttpWebResponse probe = (HttpWebResponse)((HttpWebRequest)WebRequest.Create(new Uri(txtDLink.Text))).GetResponse();
-			iSize = probe.ContentLength;
-			probe.Close();
+			iSize = LinkCheck.SizeOf(txtDLink.Text);
 		}
 		catch (Exception ex)
 		{
@@ -181,34 +180,121 @@ public class frmEditLanguage : Form
 			return;
 		}
 
-		int changed = 0;
-		foreach (UpdEdit upe in uLangs)
+		int changed;
+		if (applyToAll)
 		{
-			if (!applyToAll && cmbLang.Text != upe.updLang)
+			changed = PointEveryLanguageAtOneFile(iSize);
+		}
+		else
+		{
+			changed = 0;
+			foreach (UpdEdit upe in uLangs)
 			{
-				continue;
+				if (cmbLang.Text != upe.updLang) continue;
+
+				frmItemList.l_items[upe.updIndex] = WithThisFile(frmItemList.l_items[upe.updIndex], iSize);
+				changed++;
 			}
-			string[] line_split = upe.updItem.Split(new string[1] { "@|" }, StringSplitOptions.None);
-			XmlDocument installation = new XmlDocument();
-			installation.Load(new MemoryStream(Encoding.UTF8.GetBytes(line_split[5])));
-			installation.GetElementsByTagName("codeBase")[0].Attributes["href"].Value = txtDLink.Text;
-			installation.GetElementsByTagName("command")[0].InnerXml = installation.GetElementsByTagName("command")[0].InnerXml.Replace(installation.GetElementsByTagName("codeBase")[0].Attributes["name"].Value, txtFileName.Text);
-			installation.GetElementsByTagName("codeBase")[0].Attributes["name"].Value = txtFileName.Text;
-			installation.GetElementsByTagName("size")[0].InnerXml = iSize.ToString();
-			installation.GetElementsByTagName("size")[1].InnerXml = iSize.ToString();
-			line_split[5] = installation.OuterXml;
-			line_split[8] = iSize.ToString();
-			frmItemList.l_items[upe.updIndex] = string.Join("@|", line_split);
-			changed++;
 		}
 
 		frmItemList.ReloadItems();
 		MessageBox.Show(applyToAll
-			? (changed + " languages now point at this file.")
+			? (changed + " languages now share this one file.")
 			: "Language edited Sucessfully", frmMain.Text, MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
 		Dispose();
 	}
 
+
+	// Writes the address, the file name and the size the dialog is holding onto one row.
+	private string WithThisFile(string itemsLine, long size)
+	{
+		string[] fields = itemsLine.Split(new string[1] { "@|" }, StringSplitOptions.None);
+		XmlDocument installation = new XmlDocument();
+		installation.Load(new MemoryStream(Encoding.UTF8.GetBytes(fields[5])));
+		XmlNode codeBase = installation.GetElementsByTagName("codeBase")[0];
+		XmlNode command = installation.GetElementsByTagName("command")[0];
+		codeBase.Attributes["href"].Value = txtDLink.Text;
+		command.InnerXml = command.InnerXml.Replace(codeBase.Attributes["name"].Value, txtFileName.Text);
+		codeBase.Attributes["name"].Value = txtFileName.Text;
+		installation.GetElementsByTagName("size")[0].InnerXml = size.ToString();
+		installation.GetElementsByTagName("size")[1].InnerXml = size.ToString();
+		fields[5] = installation.OuterXml;
+		fields[8] = size.ToString();
+		return string.Join("@|", fields);
+	}
+
+	// Points every language this provider carries at one file.
+	//
+	// All of them, not only the ones the update happens to have already: a language the update
+	// has never been held in is given an entry here too, since one file that serves everybody
+	// serves them as well. They all end up on a single row, which is what lets the list say the
+	// update uses one file for every language rather than showing it as several.
+	private int PointEveryLanguageAtOneFile(long size)
+	{
+		if (uLangs.Count == 0 || baseIndex == null) return 0;
+
+		// The row they will all use. The rest of this update's rows hold the same file
+		// afterwards, so nothing points at them and they are taken out.
+		int keepAt = uLangs[0].updIndex;
+		string keepGuid = frmItemList.l_items[keepAt].Split(',')[0].Trim();
+		frmItemList.l_items[keepAt] = WithThisFile(frmItemList.l_items[keepAt], size);
+
+		HashSet<string> retired = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (UpdEdit upe in uLangs)
+		{
+			string guid = frmItemList.l_items[upe.updIndex].Split(',')[0].Trim();
+			if (!string.Equals(guid, keepGuid, StringComparison.OrdinalIgnoreCase)) retired.Add(guid);
+		}
+
+		// Every entry that named one of those rows now names the row being kept.
+		int changed = 0;
+		for (int i = 0; i < frmItemList.l_itemsindex.Length; i++)
+		{
+			string line = frmItemList.l_itemsindex[i];
+			if (string.IsNullOrEmpty(line)) continue;
+
+			int end = line.IndexOf("@|", StringComparison.Ordinal);
+			string head = end < 0 ? line : line.Substring(0, end);
+			int comma = head.LastIndexOf(',');
+			if (comma <= 0) continue;
+			if (!retired.Contains(head.Substring(comma + 1).Trim())) continue;
+
+			frmItemList.l_itemsindex[i] = head.Substring(0, comma + 1) + keepGuid +
+				(end < 0 ? string.Empty : line.Substring(head.Length));
+			changed++;
+		}
+
+		// And the languages the update has never been held in.
+		List<string> fresh = new List<string>();
+		foreach (string lang in baseLangs)
+		{
+			if (iLangs.Contains(lang)) continue;
+
+			fresh.Add(string.Format(baseIndex, lang, keepGuid));
+		}
+		if (fresh.Count > 0)
+		{
+			int was = frmItemList.l_itemsindex.Length;
+			Array.Resize(ref frmItemList.l_itemsindex, was + fresh.Count);
+			for (int i = 0; i < fresh.Count; i++) frmItemList.l_itemsindex[was + i] = fresh[i];
+			frmItemList.l_itemsindex = PWapi.DuoOptimize(frmItemList.l_itemsindex);
+		}
+
+		// The rows nothing points at any more.
+		if (retired.Count > 0)
+		{
+			List<string> kept = new List<string>(frmItemList.l_items.Length);
+			foreach (string line in frmItemList.l_items)
+			{
+				if (!string.IsNullOrEmpty(line) && retired.Contains(line.Split(',')[0].Trim())) continue;
+
+				kept.Add(line);
+			}
+			frmItemList.l_items = kept.ToArray();
+		}
+
+		return changed + fresh.Count;
+	}
 
 	private void cmbLang_SelectedIndexChanged(object sender, EventArgs e)
 	{
