@@ -1,14 +1,19 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace WUv4Powertools;
 
 // Remembers which translated strings came out of a real Windows Update log and which were produced
 // by the translate step when an update was added by hand. The dictionary format has no room for a
-// field like this, so it is kept in a plain text file beside the consumer folder. Losing the file
-// only means the app stops knowing the difference, never that a string is damaged.
+// field like this, so it is kept in a plain text file of its own. Losing the file only means the app
+// stops knowing the difference, never that a string is damaged.
+//
+// It used to sit in the consumer folder, which is the folder being published, so it went out with
+// the inventory. It now lives with the application's own settings, one file per inventory, and a
+// copy left behind in an inventory is read once and then taken out of it.
 public sealed class StringProvenance
 {
 	private const string FileName = "authentic-strings.txt";
@@ -36,24 +41,81 @@ public sealed class StringProvenance
 
 	public static StringProvenance Load(string consumerRoot)
 	{
-		StringProvenance store = new StringProvenance(System.IO.Path.Combine(consumerRoot, FileName));
+		StringProvenance store = new StringProvenance(PathFor(consumerRoot));
+		Read(store, store.path);
+
+		// A copy left in the inventory by an older version. What it knows is kept, and the file
+		// itself is taken out, since the inventory is the thing being published.
+		string inTheInventory = System.IO.Path.Combine(consumerRoot ?? string.Empty, FileName);
+		if (File.Exists(inTheInventory))
+		{
+			Read(store, inTheInventory);
+			store.dirty = true;
+			store.Save();
+			Remove(inTheInventory);
+		}
+		return store;
+	}
+
+	// Reads a list into a store, ignoring anything it cannot read.
+	private static void Read(StringProvenance store, string from)
+	{
 		try
 		{
-			if (File.Exists(store.path))
+			if (!File.Exists(from)) return;
+
+			foreach (string raw in File.ReadAllLines(from))
 			{
-				foreach (string raw in File.ReadAllLines(store.path))
-				{
-					string line = raw.Trim();
-					if (line.Length == 0 || line.StartsWith("#")) continue;
-					store.authentic.Add(line);
-				}
+				string line = raw.Trim();
+				if (line.Length == 0 || line.StartsWith("#")) continue;
+
+				store.authentic.Add(line);
 			}
 		}
 		catch
 		{
 			// An unreadable list only costs the app its knowledge of which strings are authentic.
 		}
-		return store;
+	}
+
+	// Takes the old copy out of the inventory. Failing to is not worth an error.
+	private static void Remove(string what)
+	{
+		try
+		{
+			File.Delete(what);
+		}
+		catch
+		{
+			// Read only, or in use. It is tried again the next time the inventory is opened.
+		}
+	}
+
+	// One file per inventory, so two of them never share a list. The name is a digest of the folder
+	// the inventory sits in, because a path is not a file name.
+	private static string PathFor(string consumerRoot)
+	{
+		string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+		string mine = System.IO.Path.Combine(
+			System.IO.Path.Combine(appData, "WUv4Powertools"), "provenance");
+
+		string full = consumerRoot ?? string.Empty;
+		try
+		{
+			full = System.IO.Path.GetFullPath(full);
+		}
+		catch
+		{
+			// Take the path as it was given.
+		}
+
+		StringBuilder name = new StringBuilder();
+		using (SHA1 sha = SHA1.Create())
+		{
+			byte[] digest = sha.ComputeHash(Encoding.UTF8.GetBytes(full.ToLowerInvariant()));
+			foreach (byte b in digest) name.Append(b.ToString("x2"));
+		}
+		return System.IO.Path.Combine(mine, name.ToString() + ".txt");
 	}
 
 	// Keyed by provider and the string GUID, which is what itemstrings rows are addressed by.
@@ -103,6 +165,9 @@ public sealed class StringProvenance
 
 		try
 		{
+			string dir = System.IO.Path.GetDirectoryName(path);
+			if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
 			StringBuilder sb = new StringBuilder();
 			sb.AppendLine("# Strings taken from real Windows Update logs rather than translated.");
 			sb.AppendLine("# One provider and string GUID per line. Repairing strings leaves these alone.");

@@ -115,6 +115,8 @@ public class frmMain : Form
 
 	private ToolStripMenuItem restoreBackupToolStripMenuItem;
 
+	private ToolStripMenuItem backupFolderToolStripMenuItem;
+
 	private ToolStripMenuItem repairProviderToolStripMenuItem;
 
 	private ToolStripMenuItem importLogsToolStripMenuItem;
@@ -1016,6 +1018,22 @@ public class frmMain : Form
 
 	// Puts back the .bak files written by the last save. Saving keeps the previous contents of every
 	// file alongside it, so this is a single step undo for a save that turned out to be wrong.
+	// Chooses where the copy of a file goes before it is written over. Left unset, the copy
+	// stays beside the original, which is where it has always gone.
+	public void backupFolderToolStripMenuItem_Click(object sender, EventArgs e)
+	{
+		using (FolderBrowserDialog dialog = new FolderBrowserDialog())
+		{
+			dialog.Description = "Choose where the backup of a replaced file goes. Each provider gets a folder of its own inside it.";
+			if (Backups.Folder.Length > 0) dialog.SelectedPath = Backups.Folder;
+			if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+			Backups.Folder = dialog.SelectedPath;
+			MessageBox.Show("Backups now go to:\n\n" + dialog.SelectedPath,
+				"Windows Update v4.0 PowerTools", MessageBoxButtons.OK, MessageBoxIcon.Information);
+		}
+	}
+
 	public void restoreBackupToolStripMenuItem_Click(object sender, EventArgs e)
 	{
 		frmItemList list = mdiTabs.SelectedForm as frmItemList;
@@ -1030,7 +1048,7 @@ public class frmMain : Form
 		int found = 0;
 		foreach (string name in DictionaryFileNames)
 		{
-			string backup = providerDir + "\\" + name + ".bak";
+			string backup = Backups.PathFor(providerDir + "\\" + name);
 			if (!File.Exists(backup))
 			{
 				continue;
@@ -1059,7 +1077,7 @@ public class frmMain : Form
 			foreach (string name in DictionaryFileNames)
 			{
 				string target = providerDir + "\\" + name;
-				string backup = target + ".bak";
+				string backup = Backups.PathFor(target);
 				if (File.Exists(backup))
 				{
 					File.Copy(backup, target, true);
@@ -1140,7 +1158,17 @@ public class frmMain : Form
 			}
 			try
 			{
-				File.Replace(temps[i], targets[i], targets[i] + ".bak", true);
+				if (Backups.Folder.Length == 0)
+				{
+					File.Replace(temps[i], targets[i], targets[i] + ".bak", true);
+				}
+				else
+				{
+					// A chosen folder can be on another drive, which File.Replace will not write to,
+					// so the copy is taken first and the replace is asked to keep none.
+					Backups.Keep(targets[i]);
+					File.Replace(temps[i], targets[i], null, true);
+				}
 			}
 			catch (PlatformNotSupportedException)
 			{
@@ -1156,7 +1184,7 @@ public class frmMain : Form
 
 	private static void ReplaceByCopy(string temp, string target)
 	{
-		File.Copy(target, target + ".bak", true);
+		Backups.Keep(target);
 		File.Copy(temp, target, true);
 		File.Delete(temp);
 	}
@@ -1473,6 +1501,7 @@ public class frmMain : Form
 		this.selectAllToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.toolsToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.restoreBackupToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+		this.backupFolderToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.repairProviderToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.importLogsToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
 		this.helpToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
@@ -1631,7 +1660,11 @@ public class frmMain : Form
 		this.selectAllToolStripMenuItem.Size = new System.Drawing.Size(144, 22);
 		this.selectAllToolStripMenuItem.Text = "Select &All";
 		this.selectAllToolStripMenuItem.Click += new System.EventHandler(selectAllToolStripMenuItem_Click);
-		this.toolsToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[3] { this.importLogsToolStripMenuItem, this.repairProviderToolStripMenuItem, this.restoreBackupToolStripMenuItem });
+		this.toolsToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[4] { this.importLogsToolStripMenuItem, this.repairProviderToolStripMenuItem, this.restoreBackupToolStripMenuItem, this.backupFolderToolStripMenuItem });
+		this.backupFolderToolStripMenuItem.Name = "backupFolderToolStripMenuItem";
+		this.backupFolderToolStripMenuItem.Size = new System.Drawing.Size(190, 22);
+		this.backupFolderToolStripMenuItem.Text = "&Where Backups Go...";
+		this.backupFolderToolStripMenuItem.Click += new System.EventHandler(backupFolderToolStripMenuItem_Click);
 		this.restoreBackupToolStripMenuItem.Name = "restoreBackupToolStripMenuItem";
 		this.restoreBackupToolStripMenuItem.Size = new System.Drawing.Size(190, 22);
 		this.restoreBackupToolStripMenuItem.Text = "&Undo Last Save";
